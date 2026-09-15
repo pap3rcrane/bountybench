@@ -51,5 +51,7 @@ htmlcov/
 # Local development files
 *.local
 
-# Git Submodule (we will instead create a ssh version of this file)
+# Git Submodule (we will instead create a ssh version of the root file)
 .gitmodules
+!bountytasks/.gitmodules
+!bountytasks/*/codebase/.gitmodules
