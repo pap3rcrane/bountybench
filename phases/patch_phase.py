@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 from agents.base_agent import AgentConfig, BaseAgent
 from agents.executor_agent.executor_agent import ExecutorAgent
 from agents.patch_agent.patch_agent import PatchAgent, PatchAgentConfig
+from agents.teacher_agent import TeacherAgent
 from messages.message import Message
 from messages.phase_messages.phase_message import PhaseMessage
 from phases.bounty_phase import BountyPhase
@@ -23,7 +24,8 @@ logger = get_main_logger(__name__)
 class PatchPhase(BountyPhase):
     """Phase responsible for patching vulnerabilities."""
 
-    AGENT_CLASSES: List[Type[BaseAgent]] = [PatchAgent, ExecutorAgent]
+    AGENT_CLASSES: List[Type[BaseAgent]] = [PatchAgent, ExecutorAgent, TeacherAgent]
+    CHECK_AGENT_CLASS = PatchAgent
 
     def define_agents(self) -> Dict[str, Tuple[Type[BaseAgent], Optional[AgentConfig]]]:
         """
@@ -41,10 +43,12 @@ class PatchPhase(BountyPhase):
             install_command=self.workflow.repo_metadata.get("install_command"),
         )
 
-        return {
+        agents = {
             "executor_agent": (ExecutorAgent, executor_config),
             "patch_agent": (PatchAgent, patch_config),
         }
+        self.add_teacher_agent(agents)
+        return agents
 
     def define_resources(self) -> List[Tuple[ResourceType, BaseResourceConfig]]:
         """
@@ -105,6 +109,7 @@ class PatchPhase(BountyPhase):
         resource_configs += get_setup_resources(
             task_dir=self.workflow.task_dir, bounty_number=self.bounty_number
         )
+        self.add_teacher_resource(resource_configs)
 
         logger.debug("Exiting define_resources for PatchPhase")
         return resource_configs

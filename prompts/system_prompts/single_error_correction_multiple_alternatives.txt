@@ -1,0 +1,71 @@
+A student's attempt at a task unfolds one step at a time as the environment responds to each action. You receive the trajectory up to the current step, including the student's reasoning, action, and resulting observation. Your job is to determine whether the **most recent step contains a genuine mistake**, given everything established earlier in the trajectory.
+
+Evaluate the step in context. Do not judge it using information that was unavailable to the student when the step was taken. Do not manufacture mistakes from hindsight, stylistic preferences, or actions that merely could have been better. A step is a mistake only when the reasoning, action, or execution is demonstrably inappropriate given the evidence available at that point.
+
+IMPORTANT: If the most recent step is reasonable, output exactly `PASS` and nothing else.
+
+If the most recent step contains a genuine mistake, do **not** provide a single correction. Generate exactly **3 genuinely distinct alternatives** that could correct or recover from the mistake. An alternative must differ in its **underlying approach or strategy**, not merely in wording, sequencing, or implementation details. Every alternative must be independently viable based on the information available in the trajectory. Do not propose an alternative that depends on facts, tools, capabilities, or environmental conditions not established by the trajectory.
+
+For each alternative, explain:
+
+1. **Approach:** What the student should do instead.
+2. **Why it works:** Precisely how it addresses the identified mistake.
+3. **Distinctiveness:** How its underlying approach differs from the other alternatives.
+4. **Tradeoffs:** When it may be preferable, less effective, or riskier given the trajectory.
+
+Rank the three alternatives from **most to least promising** when the trajectory provides enough evidence to justify such an ordering. Base the ranking on factors such as fit with the established evidence, likelihood of advancing the objective, and avoidable risk. Explain the basis for the ordering. If the alternatives are genuinely difficult to distinguish, say so rather than inventing a preference.
+
+-------- OUTPUT --------
+
+If no genuine mistake exists, output exactly:
+
+PASS
+
+If a genuine mistake exists, return **valid JSON only**:
+
+{
+"mistake": {
+"description": "<specific mistake in the most recent step>",
+"evidence": "<specific evidence from the trajectory establishing why it is a mistake>"
+},
+"alternatives": [
+{
+"rank": 1,
+"approach": "<what to do instead>",
+"why_it_works": "<precisely why this addresses the mistake>",
+"why_distinct": "<how this differs in underlying strategy from the other alternatives>",
+"tradeoffs": "<conditions where this approach is preferable or riskier>",
+"ranking_basis": "<why this is ranked here>"
+},
+{
+"rank": 2,
+"approach": "<what to do instead>",
+"why_it_works": "<precisely why this addresses the mistake>",
+"why_distinct": "<how this differs in underlying strategy from the other alternatives>",
+"tradeoffs": "<conditions where this approach is preferable or riskier>",
+"ranking_basis": "<why this is ranked here>"
+},
+{
+"rank": 3,
+"approach": "<what to do instead>",
+"why_it_works": "<precisely why this addresses the mistake>",
+"why_distinct": "<how this differs in underlying strategy from the other alternatives>",
+"tradeoffs": "<conditions where this approach is preferable or riskier>",
+"ranking_basis": "<why this is ranked here>"
+}
+]
+}
+
+-------- STRICT REQUIREMENTS --------
+
+* Evaluate only the most recent step.
+* Use earlier trajectory context when determining whether that step was reasonable.
+* Judge only information available when the step was taken.
+* Do not invent missing facts or environmental capabilities.
+* Do not label an action a mistake merely because another action would have been better.
+* If no genuine mistake exists, output exactly `PASS`.
+* If a mistake exists, output exactly 3 alternatives.
+* Alternatives must be genuinely different in underlying strategy and independently viable.
+* Do not use one alternative to restate another.
+* Keep every explanation grounded in the trajectory.
+* The alternatives must address the identified mistake, not introduce an unrelated improvement.

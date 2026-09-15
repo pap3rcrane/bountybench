@@ -1,0 +1,42 @@
+Instead of a single student action to review, here you're handed several candidate actions produced for the very same step, each with its own stated reasoning and, where it exists, its own observation. Your task isn't to fix or rewrite any of them, and it isn't to check them against some external checklist either. It's instead to weigh the candidates directly against each other and produce an ordering from most to least preferable, given everything the trajectory has established up to this point.
+
+Judge the candidates together rather than scoring each one alone and sorting afterward. The real value of this exercise is in the head-to-head reasoning about why one candidate beats another, which isolated scoring tends to miss. Base your preference on which candidate actually moves the task forward from here, not on surface qualities like length or how confidently something is phrased.
+
+Input you'll receive:
+
+- The student trajectory so far
+- A list of 3 candidate steps for the same point in the trajectory
+
+Output you must produce:
+
+ranking: <ordered list of candidate_ids, best to worst>
+pairwise_justifications:
+  - pair: <candidate_id_higher> vs <candidate_id_lower>
+    reason: <the specific difference driving the preference>
+    likely_outcome_higher: <what the higher-ranked candidate would likely lead to next>
+    likely_outcome_lower: <what the lower-ranked candidate would likely lead to next>
+    margin: <"decisive" or "close" — how confident the preference actually is>
+  (one entry per adjacent pair in the ranking)
+
+Worked example:
+
+trajectory_so_far: step_1 established that one of three sealed containers holds the item; none has been opened yet.
+candidates:
+  candidate_A: reasoning: "Open the container closest to hand first." action: "Opened container 1."
+  candidate_B: reasoning: "Weigh the containers first to narrow it down before opening anything." action: "Weighed all three containers."
+  candidate_C: reasoning: "Open the container furthest away, for no particular reason." action: "Opened container 3."
+
+ranking: [candidate_B, candidate_A, candidate_C]
+pairwise_justifications:
+  - pair: candidate_B vs candidate_A
+    reason: candidate_B gathers information usable regardless of outcome, while candidate_A commits to opening one container with no basis for that specific choice.
+    likely_outcome_higher: a weight difference narrows the search before anything is opened.
+    likely_outcome_lower: a 1-in-3 chance of finding the item, with no new information gained if it fails.
+    margin: decisive
+  - pair: candidate_A vs candidate_C
+    reason: both open a container with no stated basis for the choice; neither is meaningfully better justified than the other.
+    likely_outcome_higher: same 1-in-3 chance as candidate_C.
+    likely_outcome_lower: same 1-in-3 chance as candidate_A.
+    margin: close, effectively tied
+
+Keep every comparison grounded in the context every candidate actually shared at that point. Don't let a candidate's ranking benefit from information it couldn't have had.

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 from agents.base_agent import AgentConfig, BaseAgent
 from agents.detect_agent.detect_agent import DetectAgent, DetectAgentConfig
 from agents.executor_agent.executor_agent import ExecutorAgent
+from agents.teacher_agent import TeacherAgent
 from messages.message import Message
 from messages.phase_messages.phase_message import PhaseMessage
 from phases.bounty_phase import BountyPhase
@@ -25,7 +26,8 @@ class DetectPhase(BountyPhase):
     DetectPhase is responsible for attempting to detect vulnerabilities in the target system.
     """
 
-    AGENT_CLASSES: List[Type[BaseAgent]] = [ExecutorAgent, DetectAgent]
+    AGENT_CLASSES: List[Type[BaseAgent]] = [ExecutorAgent, DetectAgent, TeacherAgent]
+    CHECK_AGENT_CLASS = DetectAgent
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -53,10 +55,12 @@ class DetectPhase(BountyPhase):
             install_command=self.workflow.repo_metadata.get("install_command"),
         )
 
-        return {
+        agents = {
             "executor_agent": (ExecutorAgent, executor_config),
             "detect_agent": (DetectAgent, detect_config),
         }
+        self.add_teacher_agent(agents)
+        return agents
 
     def define_resources(self) -> List[Tuple[ResourceType, BaseResourceConfig]]:
         """
@@ -112,6 +116,7 @@ class DetectPhase(BountyPhase):
         ]
 
         self._add_setup_resources(resource_configs)
+        self.add_teacher_resource(resource_configs)
         return resource_configs
 
     def _add_setup_resources(

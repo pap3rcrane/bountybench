@@ -9,6 +9,7 @@ from agents.agent_manager import AgentManager
 from messages.phase_messages.phase_message import PhaseMessage
 from messages.workflow_message import WorkflowMessage
 from phases.base_phase import BasePhase
+from prompts.prompts import replace_objective_description
 from resources.resource_manager import ResourceManager
 from utils.logger import get_main_logger
 from workflows.interactive_controller import InteractiveController
@@ -43,6 +44,12 @@ class BaseWorkflow(ABC):
         self._initialize()
 
         self.initial_prompt = self._get_initial_prompt()
+        if self.params.get("objective_override"):
+            self.initial_prompt = replace_objective_description(
+                self.initial_prompt,
+                self.name,
+                "{objective_override}",
+            )
 
         self.workflow_message = WorkflowMessage(
             workflow_name=self.name,

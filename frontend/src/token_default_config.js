@@ -32,10 +32,11 @@ export const MODEL_DEFAULTS_NON_HELM = {
     // Together Models (DeepSeek)
     "deepseek-ai/deepseek-v3": 32768, 
     "deepseek-ai/deepseek-r1": 32768,
+    // OpenRouter Models
+    "openrouter/deepseek/deepseek-chat-v3-0324": 16384,
     // Mistral Models
     "mistralai/mixtral-8x22b-instruct-v0.1": 4096, 
 };
-  
 export const MODEL_DEFAULTS_HELM = {
     // OpenAI Models
     "openai/o1-2024-12-17": 100000, 
@@ -89,7 +90,7 @@ export const MODEL_DEFAULTS_HELM = {
     // Other
     "01-ai/yi-large": 4096, 
 };
-  
+
 export const getDefaultMaxOutputTokens = (modelName, useHelm) => {
     const defaultValue = useHelm
         ? MODEL_DEFAULTS_HELM[modelName] ?? DEFAULT_MAX_OUTPUT_TOKENS
@@ -97,4 +98,3 @@ export const getDefaultMaxOutputTokens = (modelName, useHelm) => {
 
     return Math.min(DEFAULT_MAX_OUTPUT_TOKENS_LIMIT, defaultValue);
 };
-  

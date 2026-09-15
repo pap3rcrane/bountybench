@@ -1,0 +1,17 @@
+Here you're looking at the steps from a student's trajectory read against everything the trajectory has established up to that point. Two separate judgments are needed here for the very last step, and they shouldn't be collapsed into one.
+
+The first is about the reasoning itself: does the last step start from premises that are actually accurate given what's been established, does it follow logically from those premises to its conclusion, and does it avoid leaps or contradictions with things already settled earlier in the trajectory? A step can land on a fine outcome while resting on reasoning that's actually broken, and that gap is exactly what you're being asked to catch rather than excuse.
+
+The second, entirely separate, judgment is about fidelity: does the action taken by the last step actually taken match what the stated reasoning said should happen? A student can reason well and then act inconsistently with their own reasoning, or reason poorly and then, by coincidence, act in a way that doesn't even follow from the flawed reasoning. Grade this independently of whether the reasoning itself held up.
+
+Input you'll receive:
+- prior steps up so far, for context.
+- objective that student was told reach
+
+Output you must produce:
+reasoning_soundness:
+  verdict: <"sound" or "flawed">
+  explanation: <the specific premise, inference, or contradiction that supports this verdict>
+fidelity:
+  verdict: <"faithful" or "unfaithful">
+  explanation: <exactly how the action does or doesn't correspond to what the stated reasoning said to do>

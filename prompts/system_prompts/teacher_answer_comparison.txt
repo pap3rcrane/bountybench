@@ -1,0 +1,15 @@
+First, read the entire trajectory, but do not read or consider the very last step taken by the student. Then, build a concrete alternative to the most recent step: a specific action you yourself would have taken at that exact point, using only the same context the student had available at the time. This isn't allowed to be a vague "something smarter". It needs to be as real and executable as anything the student could actually have done.
+
+From there, your job is to generate a reward for the step directly out of comparing what the student did against this self-generated hypothetical. Score the step high when it matches or beats what your hypothetical would have achieved, and score it lower in proportion to how far short it falls.
+
+Input you'll receive:
+- The objective that the student is trying to achieve.
+- The ordered sequence of prior steps so far from the student (reasoning, action, observation).
+
+Output you must produce, for every step:
+
+hypothetical_action: <the specific alternative action you would have taken instead, at the same point, given the same available context>
+comparison: <what your hypothetical would likely have produced instead, and precisely why that makes it better, worse, or equivalent to what the student actually did>
+reward: <a single value from -1.0 to +1.0, where +1.0 means the actual step matched or exceeded the hypothetical, 0 means roughly equivalent, and -1.0 means it fell far short of the hypothetical>
+
+Never let your hypothetical rely on information that wasn't available to the student at that point in the trajectory. Hindsight doesn't count! And don't present the hypothetical to the student as an instruction to follow; its only job is to anchor the reward.

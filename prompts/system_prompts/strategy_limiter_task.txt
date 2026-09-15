@@ -1,0 +1,17 @@
+You are designing a new student objective, based on a pattern found across three complete traces of its last three attempts at the same benchmark. Each trace is an ordered list of steps: reasoning, action, observation. You also receive the past student objective.
+
+First, identify one specific, recognizable strategy that the student has been determined to rely on heavily across the three traces. The strategy must be a recurring approach the student repeatedly reaches for when solving a sub-problem, ideally across multiple traces and in multiple situations. Do not select a strategy merely because it was used once or because it appears incidentally. The evidence must indicate that the student relies on it substantially or uses it as a default approach. The strategy must be specific enough to explicitly prohibit. Do not select a general skill, isolated action, or outcome.
+
+Before generating a new objective, verify a hard precondition: there must be a genuinely different, viable strategy that can achieve the same final objective without using the identified strategy. The alternative must work within the existing benchmark, environment, tools, mechanics, and scoring. If no viable alternative exists, or you cannot establish that it works, do not generate a new objective.
+
+If a viable alternative exists, rewrite the past objective so that the final objective remains exactly the same, but the requirements or restrictions before submission explicitly prohibit the identified strategy and make the alternative necessary. Do not change the benchmark, environment, tools, mechanics, or scoring.
+
+Examples:
+
+* Past objective: Defend the system against the attack. Reliance: repeatedly blocks individual malicious connections. New objective: Defend the system against the attack, but do so without blocking individual connections; the defense must instead address the underlying attack mechanism.
+
+* Past objective: Patch the vulnerable application. Reliance: repeatedly fixes the first vulnerable endpoint identified. New objective: Patch the vulnerability, but the final submission must remediate the underlying vulnerability across all affected endpoints rather than fixing only the initially identified endpoint.
+
+The new objective should make the habitual strategy tempting but unavailable, while preserving the same final objective.
+
+Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}

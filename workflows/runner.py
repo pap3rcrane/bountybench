@@ -11,6 +11,7 @@ from typing import Dict, Type
 from rich.console import Console
 from rich.traceback import Traceback
 
+from agents.teacher_agent import TeacherAgent, TeacherMode, TeacherSystemPromptPlacement
 from utils.logger import get_main_logger, logger_config
 from workflows.base_workflow import BaseWorkflow
 from workflows.detect_patch_workflow import DetectPatchWorkflow
@@ -18,6 +19,7 @@ from workflows.detect_workflow import DetectWorkflow
 from workflows.exploit_patch_workflow import ExploitPatchWorkflow
 from workflows.exploit_workflow import ExploitWorkflow
 from workflows.patch_workflow import PatchWorkflow
+from workflows.teacher_modes import rewrite_objective, write_objective
 
 # This module serves as the single entry point for running workflows via the command line.
 # Example usage:
@@ -30,6 +32,18 @@ from workflows.patch_workflow import PatchWorkflow
 
 
 console = Console(record=True)
+RUNNER_EVENT_PREFIX = "BOUNTYBENCH_EVENT "
+
+
+def emit_runner_event(event: str, **fields) -> None:
+    """Emit one machine-readable progress event for batch launchers."""
+    payload = {
+        "event": event,
+        "timestamp": datetime.now().astimezone().isoformat(),
+        **fields,
+    }
+    print(RUNNER_EVENT_PREFIX + json.dumps(payload, default=str), flush=True)
+
 
 import signal
 
@@ -90,6 +104,64 @@ class WorkflowRunner:
         parser.add_argument("--use_helm", action="store_true", help="Use HelmModels")
         parser.add_argument("--model", type=str, help="LM model to query")
         parser.add_argument(
+            "--teacher_model",
+            type=str,
+            default="openrouter/deepseek/deepseek-v4-pro",
+            help="Model used by the TeacherAgent",
+        )
+        parser.add_argument(
+            "--teacher_mode",
+            type=str,
+            choices=[mode.value for mode in TeacherMode],
+            help="Teacher behavior: observe, steer, or objective_rewrite",
+        )
+        parser.add_argument(
+            "--teacher_system_prompt_file",
+            type=str,
+            help="Path to the TeacherAgent system prompt text file",
+        )
+        parser.add_argument(
+            "--teacher_system_prompt_placement",
+            type=str,
+            choices=[placement.value for placement in TeacherSystemPromptPlacement],
+            help="Required teacher system prompt transport: none, prepend, or system",
+        )
+        parser.add_argument(
+            "--teacher_max_input_tokens",
+            type=int,
+            default=131072,
+            help="Maximum input tokens for the TeacherAgent's full-trace context",
+        )
+        parser.add_argument(
+            "--teacher_max_output_tokens",
+            type=int,
+            default=4096,
+            help="Maximum output tokens for TeacherAgent responses",
+        )
+        parser.add_argument(
+            "--teacher_temperature",
+            type=float,
+            default=0.0,
+            help="Sampling temperature for TeacherAgent responses",
+        )
+        parser.add_argument(
+            "--generate_source_runs",
+            action="store_true",
+            help="Run three teacher-free students before objective rewriting",
+        )
+        parser.add_argument(
+            "--source_logs",
+            nargs=3,
+            metavar=("LOG_1", "LOG_2", "LOG_3"),
+            help="Exactly three source logs for objective_rewrite",
+        )
+        parser.add_argument(
+            "--objective_output_dir",
+            type=str,
+            default="generated_objectives",
+            help="Directory for generated objective JSON files",
+        )
+        parser.add_argument(
             "--max_input_tokens", type=int, help="Maximum tokens to pass to the model"
         )
         parser.add_argument(
@@ -126,6 +198,55 @@ class WorkflowRunner:
 
     def parse_arguments(self) -> None:
         self.args = self.parser.parse_args()
+        self._validate_teacher_arguments()
+
+    def _validate_teacher_arguments(self) -> None:
+        mode = self.args.teacher_mode
+        system_prompt_file = self.args.teacher_system_prompt_file
+        system_prompt_placement = self.args.teacher_system_prompt_placement
+
+        if bool(mode) != bool(system_prompt_placement):
+            self.parser.error(
+                "--teacher_mode and --teacher_system_prompt_placement must be "
+                "provided together"
+            )
+        if system_prompt_placement == TeacherSystemPromptPlacement.NONE.value:
+            if system_prompt_file:
+                self.parser.error(
+                    "--teacher_system_prompt_file must be omitted when "
+                    "--teacher_system_prompt_placement is none"
+                )
+        elif system_prompt_placement and not system_prompt_file:
+            self.parser.error(
+                "--teacher_system_prompt_file is required when "
+                "--teacher_system_prompt_placement is prepend or system"
+            )
+        elif system_prompt_file and not mode:
+            self.parser.error(
+                "--teacher_system_prompt_file requires --teacher_mode and "
+                "--teacher_system_prompt_placement"
+            )
+        if (
+            system_prompt_placement == TeacherSystemPromptPlacement.SYSTEM.value
+            and not self.args.teacher_model.startswith("google/")
+        ):
+            self.parser.error(
+                "--teacher_system_prompt_placement system requires a direct "
+                "google/... Gemini teacher model"
+            )
+
+        has_source_logs = self.args.source_logs is not None
+        if mode == TeacherMode.OBJECTIVE_REWRITE.value:
+            if self.args.generate_source_runs == has_source_logs:
+                self.parser.error(
+                    "objective_rewrite requires exactly one of "
+                    "--generate_source_runs or --source_logs LOG_1 LOG_2 LOG_3"
+                )
+        elif self.args.generate_source_runs or has_source_logs:
+            self.parser.error(
+                "--generate_source_runs and --source_logs are only valid with "
+                "--teacher_mode objective_rewrite"
+            )
 
     def initialize_workflow(self) -> None:
         """Initialize the workflow instance with parsed arguments."""
@@ -150,7 +271,141 @@ class WorkflowRunner:
                 kwargs[arg] = Path(kwargs[arg])
 
         self.kwargs = kwargs
-        self.workflow = workflow_class(**kwargs)
+        if self.args.teacher_mode == TeacherMode.OBJECTIVE_REWRITE.value:
+            workflow_validator = object.__new__(workflow_class)
+            workflow_validator.validate_arguments(self._student_kwargs(kwargs))
+            if self.args.teacher_system_prompt_file:
+                TeacherAgent._resolve_prompt_path(self.args.teacher_system_prompt_file)
+        else:
+            self.workflow = workflow_class(**kwargs)
+
+    @staticmethod
+    def _student_kwargs(kwargs: dict) -> dict:
+        student_kwargs = kwargs.copy()
+        for key in (
+            "teacher_mode",
+            "teacher_system_prompt_file",
+            "teacher_system_prompt_placement",
+            "teacher_model",
+            "teacher_max_input_tokens",
+            "teacher_max_output_tokens",
+            "teacher_temperature",
+            "generate_source_runs",
+            "source_logs",
+            "objective_output_dir",
+        ):
+            student_kwargs.pop(key, None)
+        return student_kwargs
+
+    async def _run_initialized_workflow(self, run_role: str = "normal") -> Path:
+        emit_runner_event("student_run_started", run_role=run_role)
+        try:
+            await self.workflow.run()
+            if not self.check_workflow_completion():
+                raise Exception("Workflow marked as incomplete in the log file.")
+        except Exception as error:
+            log_file = getattr(
+                getattr(self.workflow, "workflow_message", None), "log_file", None
+            )
+            emit_runner_event(
+                "student_run_finished",
+                run_role=run_role,
+                status="failure",
+                workflow_log_path=log_file,
+                error=f"{error.__class__.__name__}: {error}",
+            )
+            raise
+
+        log_file = Path(self.workflow.workflow_message.log_file)
+        emit_runner_event(
+            "student_run_finished",
+            run_role=run_role,
+            status="success",
+            workflow_log_path=log_file,
+            error=None,
+        )
+        return log_file
+
+    async def _run_objective_rewrite(self) -> None:
+        workflow_class = self._workflow_factory[self.args.workflow_type]
+        student_kwargs = self._student_kwargs(self.kwargs)
+        system_prompt_file = (
+            TeacherAgent._resolve_prompt_path(self.args.teacher_system_prompt_file)
+            if self.args.teacher_system_prompt_file
+            else None
+        )
+
+        if self.args.generate_source_runs:
+            source_logs = []
+            for run_number in range(1, 4):
+                console.print(
+                    f"[bold cyan]Running teacher-free source student "
+                    f"{run_number}/3...[/]"
+                )
+                self.workflow = workflow_class(**student_kwargs)
+                source_logs.append(
+                    await self._run_initialized_workflow(
+                        run_role=f"source_{run_number}"
+                    )
+                )
+        else:
+            source_logs = [Path(path) for path in self.args.source_logs]
+            missing_logs = [str(path) for path in source_logs if not path.is_file()]
+            if missing_logs:
+                raise ValueError(
+                    "Source log files do not exist: " + ", ".join(missing_logs)
+                )
+            if len({path.resolve() for path in source_logs}) != 3:
+                raise ValueError("--source_logs must name three different log files")
+
+        emit_runner_event("teacher_rewrite_started")
+        try:
+            objective = await rewrite_objective(
+                source_logs=source_logs,
+                system_prompt_file=system_prompt_file,
+                system_prompt_placement=TeacherSystemPromptPlacement(
+                    self.args.teacher_system_prompt_placement
+                ),
+                model=self.args.teacher_model,
+                use_mock_model=self.args.use_mock_model,
+                max_input_tokens=self.args.teacher_max_input_tokens,
+                max_output_tokens=self.args.teacher_max_output_tokens,
+                temperature=self.args.teacher_temperature,
+            )
+        except Exception as error:
+            emit_runner_event(
+                "teacher_rewrite_finished",
+                status="failure",
+                error=f"{error.__class__.__name__}: {error}",
+            )
+            raise
+        emit_runner_event("teacher_rewrite_finished", status="success", error=None)
+        objective_file = write_objective(
+            objective=objective,
+            output_dir=Path(self.args.objective_output_dir),
+            task_dir=Path(self.args.task_dir),
+            bounty_number=self.args.bounty_number,
+            workflow_type=self.args.workflow_type,
+        )
+        console.print(f"[bold green]Wrote rewritten objective: {objective_file}[/]")
+
+        console.print("[bold cyan]Running student with rewritten objective...[/]")
+        final_kwargs = student_kwargs.copy()
+        final_kwargs["objective_override"] = objective
+        final_kwargs["objective_file"] = str(objective_file)
+        final_kwargs["objective_rewrite"] = {
+            "teacher_model": self.args.teacher_model,
+            "teacher_system_prompt_file": (
+                str(system_prompt_file) if system_prompt_file else None
+            ),
+            "teacher_system_prompt_placement": (
+                self.args.teacher_system_prompt_placement
+            ),
+            "source_logs": [str(path) for path in source_logs],
+            "objective": objective,
+        }
+        self.workflow = workflow_class(**final_kwargs)
+        await self._run_initialized_workflow(run_role="rewritten_objective")
 
     async def run(self) -> int:
         """Execute the workflow with error handling."""
@@ -160,11 +415,10 @@ class WorkflowRunner:
                 f"[bold green]Starting {self.args.workflow_type} workflow...[/]"
             )
             console.print(f"[bold green]*" * 40)
-            await self.workflow.run()
-
-            # Check if the workflow is complete
-            if not self.check_workflow_completion():
-                raise Exception("Workflow marked as incomplete in the log file.")
+            if self.args.teacher_mode == TeacherMode.OBJECTIVE_REWRITE.value:
+                await self._run_objective_rewrite()
+            else:
+                await self._run_initialized_workflow(run_role="normal")
 
             console.print(f"[bold green]*" * 40)
             console.print(

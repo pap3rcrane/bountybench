@@ -1,3 +1,22 @@
+x-backend-environment: &backend-environment
+  - HELM_API_KEY=${HELM_API_KEY}
+  - OPENAI_API_KEY=${OPENAI_API_KEY}
+  - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+  - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+  - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+  - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+  - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+  - TOGETHER_API_KEY=${TOGETHER_API_KEY}
+
+x-matrix-worker: &matrix-worker
+  image: bountybench-backend
+  privileged: true
+  command: ["tail", "-f", "/dev/null"]
+  profiles: ["matrix-workers"]
+  networks:
+    - app-network
+  environment: *backend-environment
+
 services:
   nginx:
       build:
@@ -13,6 +32,7 @@ services:
         - app-network
 
   backend:
+    image: bountybench-backend
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -22,19 +42,64 @@ services:
       - dind-data:/var/lib/docker
       - ./logs:/app/logs
       - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
       # Please uncomment the following lines if you need to mount SSH keys for the backend service
       # - ${HOME}/.ssh/id_rsa_backend-service:/root/.ssh/id_rsa:ro
       # - ${HOME}/.ssh/id_rsa_backend-service.pub:/root/.ssh/id_rsa.pub:ro
     networks:
       - app-network
-    environment:
-      - HELM_API_KEY=${HELM_API_KEY}
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
-      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - TOGETHER_API_KEY=${TOGETHER_API_KEY}
+    environment: *backend-environment
+
+  backend-worker-1:
+    <<: *matrix-worker
+    container_name: backend-worker-1
+    volumes:
+      - dind-data-worker-1:/var/lib/docker
+      - ./logs:/app/logs
+      - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
+
+  backend-worker-2:
+    <<: *matrix-worker
+    container_name: backend-worker-2
+    volumes:
+      - dind-data-worker-2:/var/lib/docker
+      - ./logs:/app/logs
+      - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
+
+  backend-worker-3:
+    <<: *matrix-worker
+    container_name: backend-worker-3
+    volumes:
+      - dind-data-worker-3:/var/lib/docker
+      - ./logs:/app/logs
+      - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
+
+  backend-worker-4:
+    <<: *matrix-worker
+    container_name: backend-worker-4
+    volumes:
+      - dind-data-worker-4:/var/lib/docker
+      - ./logs:/app/logs
+      - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
+
+  backend-worker-5:
+    <<: *matrix-worker
+    container_name: backend-worker-5
+    volumes:
+      - dind-data-worker-5:/var/lib/docker
+      - ./logs:/app/logs
+      - ./full_logs:/app/full_logs
+      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
+      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
 
   frontend:
     build:
@@ -53,4 +118,14 @@ networks:
 
 volumes:
   dind-data:
-    external: true
+    name: dind-data
+  dind-data-worker-1:
+    name: bountybench-dind-data-worker-1
+  dind-data-worker-2:
+    name: bountybench-dind-data-worker-2
+  dind-data-worker-3:
+    name: bountybench-dind-data-worker-3
+  dind-data-worker-4:
+    name: bountybench-dind-data-worker-4
+  dind-data-worker-5:
+    name: bountybench-dind-data-worker-5

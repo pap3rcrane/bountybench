@@ -19,6 +19,8 @@ COST_PER_MILLION_INPUT_TOKENS: Dict[str, float] = {
     # Together / DeepSeek models: https://www.together.ai/pricing
     # Note: Official DeepSeek API pricing $0.55 (1M input) / $2.19 (1M output)
     "deepseek-ai/deepseek-r1": 3.00,
+    # OpenRouter: https://openrouter.ai/deepseek/deepseek-chat-v3-0324
+    "openrouter/deepseek/deepseek-chat-v3-0324": 0.24,
     # Google models: https://ai.google.dev/gemini-api/docs/pricing
     # Note: Each of our API call does not exceed 200k tokens, use the prompts <= 200k tokens pricing
     "google/gemini-2.5-pro-preview-03-25": 1.25,
@@ -37,6 +39,7 @@ COST_PER_MILLION_CACHED_INPUT_TOKENS: Dict[str, float] = {
     "openai/o3-2025-04-16-low-reasoning-effort": 2.50,
     "openai/o3-2025-04-16-high-reasoning-effort": 2.50,
     "deepseek-ai/deepseek-r1": 3.00,
+    "openrouter/deepseek/deepseek-chat-v3-0324": 0.24,
     "google/gemini-2.5-pro-preview-03-25": 0.31,
 }
 
@@ -53,6 +56,7 @@ COST_PER_MILLION_OUTPUT_TOKENS: Dict[str, float] = {
     "openai/o3-2025-04-16-low-reasoning-effort": 40.00,
     "openai/o3-2025-04-16-high-reasoning-effort": 40.00,
     "deepseek-ai/deepseek-r1": 7.00,
+    "openrouter/deepseek/deepseek-chat-v3-0324": 0.90,
     "google/gemini-2.5-pro-preview-03-25": 10.00,
 }
 

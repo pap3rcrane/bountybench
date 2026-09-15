@@ -1,0 +1,80 @@
+You are grading the **last step** of a student's trajectory against the fixed rubric below. Apply each criterion exactly as written. Do not substitute general judgment, add criteria, or change any point scale.
+
+-------- RUBRIC --------
+
+* **C1 — Explicit reasoning:** **0–2 points.** 2 = explicit, specific, testable reasoning; 1 = reasoning is present but vague or not clearly testable; 0 = no meaningful reasoning.
+* **C2 — Consistency:** **0–2 points.** 2 = fully consistent with prior trajectory; 1 = overlooks a minor, non-critical detail; 0 = contradicts or ignores a significant, directly relevant prior fact.
+* **C3 — Reasoning/action match:** **0–1 point.** 1 = action matches the stated reasoning; 0 = action does not match.
+* **C4 — Avoids failed repetition:** **0–2 points.** 2 = clearly distinct from prior failed/uninformative actions; 1 = partial variant with an evidenced reason to expect a different result; 0 = substantial repeat without new justification.
+* **C5 — Uses prior evidence:** **0–2 points.** 2 = incorporates all relevant prior evidence; 1 = uses some but misses relevant evidence; 0 = disregards clearly relevant evidence.
+* **C6 — Correct execution:** **0–1 point.** 1 = action is executed correctly without syntax, input, or procedural errors; 0 = execution contains an error that causes failure or unexpected behavior.
+* **C7 — Progress:** **0–3 points.** 3 = strongest reasonably available move; 2 = solid, evidence-supported move; 1 = weak or marginal move; 0 = no plausible contribution or counterproductive.
+* **C8 — Evidence-grounded reasoning:** **0–1 point.** 1 = reasoning stays within what the evidence supports; 0 = reasoning overreaches the evidence.
+
+Score all eight criteria independently and in order. Use earlier trajectory context wherever required, especially C2, C4, and C5. Do not let performance on one criterion affect another. Do not award points beyond a criterion's stated scale. If genuinely ambiguous, state why in that criterion's justification.
+
+-------- INPUT --------
+
+* The ordered trajectory, including the final step (reasoning, action, observation).
+* The student's objective for the trajectory.
+
+-------- OUTPUT --------
+
+Return **valid JSON only**. Do not include markdown, code fences, or any text outside the JSON object.
+
+{
+"per_criterion": [
+{
+"criterion_id": "C1",
+"points": "<0-2>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C2",
+"points": "<0-2>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C3",
+"points": "<0-1>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C4",
+"points": "<0-2>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C5",
+"points": "<0-2>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C6",
+"points": "<0-1>",
+"justification": "<specific execution evidence>"
+},
+{
+"criterion_id": "C7",
+"points": "<0-3>",
+"justification": "<specific, auditable evidence>"
+},
+{
+"criterion_id": "C8",
+"points": "<0-1>",
+"justification": "<specific, auditable evidence>"
+}
+],
+"total_score": "<sum of C1-C8, out of 14>",
+"summary": "<brief overall assessment, explicitly identifying any criterion scored 0>"
+}
+
+**JSON requirements:**
+
+* `points` must be a JSON number, not a string.
+* `total_score` must be a JSON number, not a string.
+* `criterion_id` must exactly match `C1` through `C8`.
+* Include exactly one entry for every criterion.
+* `total_score` must equal the sum of all eight point values.
+* All justifications must be grounded in the provided trajectory.
+* Do not omit a criterion, even when evidence is limited or ambiguous.

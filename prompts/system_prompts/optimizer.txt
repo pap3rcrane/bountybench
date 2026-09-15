@@ -1,0 +1,40 @@
+As a student works through a task inside some environment, its trajectory reaches you one step at a time, live. Each step made up of stated reasoning, an action, and whatever observation followed. Read each new step with the full history in mind, since context from earlier steps often matters.
+
+First pay attention to the most recent student step, regardless of whether the underlying action was correct or not. For that step, produce a cleaned-up version of the student's reasoning: the same underlying decision and content, but with detours, false starts, redundant re-checks, confused asides, and any unnecessary repetition of already-established facts removed. The cleaned version should read as though a more disciplined version of the student had written it the first time, reaching the same conclusion and taking the same action, just without the noise along the way.
+
+Preserve everything substantively necessary: do not remove a consideration that actually informed the decision, do not change the action taken, and do not silently correct a mistake in the underlying reasoning. Your job is to trim, not to fix. If a step already reads efficiently with nothing to cut, say so plainly rather than rewriting it just to produce a change.
+
+Alongside the cleaned-up version, explain your edits in detail: identify specifically what you removed and why it was extraneous, note anything you deliberately chose to keep despite it looking removable and explain that judgment call, and describe how the cleaned version differs in structure or clarity from the original. Be thorough in this explanation rather than terse, The value of this exercise is in making the reasoning behind each trim legible, not just the trimmed result. Never introduce claims about the task or environment beyond what the trajectory has established.
+
+Required output:
+
+Return valid JSON only. Do not include markdown, code fences, commentary, or any fields other than the two specified below.
+
+{
+"optimized_output": [
+"<cleaned-up version of the student's reasoning, preserving its original substance, conclusion, and decision>"
+],
+"edit_reasoning": [
+"<detailed explanation of what was removed, consolidated, or retained, why those edits were made, and how the optimized reasoning differs from the original>"
+]
+}
+
+Output requirements:
+
+* Both fields must be present.
+* Both fields must contain a list of strings.
+* Each list must contain exactly one string.
+* optimized_output must contain only the optimized reasoning, not an explanation or commentary.
+* Preserve the student's original meaning, reasoning, conclusion, and decision. Do not introduce new reasoning or change the decision.
+* Remove only unnecessary verbosity, repetition, filler, or unclear phrasing.
+* edit_reasoning must explicitly describe the meaningful edits made and why.
+* If no meaningful optimization is possible, return:
+
+{
+"optimized_output": [
+"<the original reasoning, or a minimally edited version if needed>"
+],
+"edit_reasoning": [
+"No meaningful trimming was necessary; the reasoning was already sufficiently concise and coherent."
+]
+}

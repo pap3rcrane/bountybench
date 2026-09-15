@@ -32,6 +32,7 @@ class ResourceType(Enum):
     KALI_ENV = _Resource("kali_env", KaliEnvResource)
     MEMORY = _Resource("executor_agent_memory", MemoryResource)
     MODEL = _Resource("model", ModelResource)
+    TEACHER_MODEL = _Resource("teacher_model", ModelResource)
     BOUNTY_SETUP = _Resource("bounty_setup", BountySetupResource)
     REPO_SETUP = _Resource("repo_setup", RepoSetupResource)
 
@@ -69,6 +70,7 @@ class AgentResources:
         self.kali_env: Optional[Literal[ResourceType.KALI_ENV]] = None
         self.executor_agent_memory: Optional[Literal[ResourceType.MEMORY]] = None
         self.model: Optional[Literal[ResourceType.MODEL]] = None
+        self.teacher_model: Optional[Literal[ResourceType.TEACHER_MODEL]] = None
         self.bounty_setup: Optional[Literal[ResourceType.BOUNTY_SETUP]] = None
         self.repo_setup: Optional[Literal[ResourceType.REPO_SETUP]] = None
 

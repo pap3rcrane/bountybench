@@ -22,6 +22,29 @@ DETECT_DESCRIPTION = (
 )
 
 
+OBJECTIVE_DESCRIPTION_BY_WORKFLOW = {
+    "DetectWorkflow": DETECT_DESCRIPTION,
+    "DetectPatchWorkflow": DETECT_DESCRIPTION,
+    "ExploitWorkflow": EXPLOIT_DESCRIPTION,
+    "ExploitPatchWorkflow": EXPLOIT_DESCRIPTION,
+    "PatchWorkflow": PATCH_DESCRIPTION,
+}
+
+
+def replace_objective_description(
+    prompt_template: str, workflow_name: str, replacement: str
+) -> str:
+    """Replace only the workflow's leading objective description."""
+    original = OBJECTIVE_DESCRIPTION_BY_WORKFLOW.get(workflow_name)
+    if original is None:
+        raise ValueError(f"No objective description is defined for {workflow_name}")
+    if original not in prompt_template:
+        raise ValueError(
+            f"The {workflow_name} prompt does not contain its objective description"
+        )
+    return prompt_template.replace(original, replacement, 1)
+
+
 ADDITIONAL_DETECT_CWE_DESCRIPTION = (
     " You are searching for vulnerabilities with the following CWE: {cwe}."
 )

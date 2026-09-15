@@ -1,7 +1,7 @@
 import http
-import tokenize
 from typing import List
 
+import tiktoken
 from requests.exceptions import ConnectionError, HTTPError, Timeout
 from tenacity import (
     retry,
@@ -12,7 +12,6 @@ from tenacity import (
 
 from resources.model_resource.helm_models.helm_models import HelmModels
 from resources.model_resource.model_provider import ModelProvider
-from resources.model_resource.openai_models.openai_models import OpenAIModels
 from utils.logger import get_main_logger
 
 logger = get_main_logger(__name__)
@@ -24,12 +23,14 @@ def get_model_provider(use_helm: bool = False) -> ModelProvider:
     Returns:
         ModelProvider: An instance of the appropriate model provider class.
     """
-    # TODO: Support Different Model Providers (Also handle Azure case)
     if use_helm:
-        model_provider = HelmModels()
-    else:
-        model_provider = OpenAIModels()
-    return model_provider
+        return HelmModels()
+    raise ValueError("Non-HELM tokenization uses the local tokenizer directly")
+
+
+def get_local_tokenizer():
+    """Return the credential-free fallback tokenizer used by non-HELM models."""
+    return tiktoken.encoding_for_model("gpt-4o")
 
 
 def get_num_tokens(model_input: str, model: str, use_helm: bool = False) -> int:
@@ -44,7 +45,9 @@ def get_num_tokens(model_input: str, model: str, use_helm: bool = False) -> int:
     Returns:
     int: The number of tokens in the model input.
     """
-    return get_model_provider(use_helm).get_num_tokens(model, model_input)
+    if use_helm:
+        return get_model_provider(use_helm).get_num_tokens(model, model_input)
+    return len(get_local_tokenizer().encode(model_input))
 
 
 @retry(
@@ -67,7 +70,9 @@ def tokenize_input(model_input: str, model: str, use_helm: bool = False) -> List
     Returns:
     List[int]: A list of token IDs representing the tokenized input.
     """
-    return get_model_provider(use_helm).tokenize(model, model_input)
+    if use_helm:
+        return get_model_provider(use_helm).tokenize(model, model_input)
+    return get_local_tokenizer().encode(model_input)
 
 
 @retry(
@@ -92,11 +97,17 @@ def decode_tokenized_inputs(
     Returns:
     str: The decoded string from the token IDs.
     """
-    return get_model_provider(use_helm).decode(model, tokens)
+    if use_helm:
+        return get_model_provider(use_helm).decode(model, tokens)
+    return get_local_tokenizer().decode(tokens)
 
 
 def truncate_input_to_max_tokens(
-    max_input_tokens: int, model_input: str, model: str, use_helm: bool = False
+    max_input_tokens: int,
+    model_input: str,
+    model: str,
+    use_helm: bool = False,
+    preserve_oldest: bool = False,
 ) -> str:
     input_tokens = tokenize_input(model_input, model, use_helm)
     num_input_tokens = len(input_tokens)
@@ -109,6 +120,12 @@ def truncate_input_to_max_tokens(
             f"Number of input tokens ({num_input_tokens}) exceeds max tokens ({max_input_tokens}). Truncating input."
         )
         tokens_to_keep = max_input_tokens - num_tokens_in_truncation_alert
+        if preserve_oldest:
+            truncated_tokens = (
+                input_tokens[:tokens_to_keep] + truncation_alert_tokens
+            )
+            return decode_tokenized_inputs(truncated_tokens, model, use_helm)
+
         half_tokens_to_keep = tokens_to_keep // 2
         beginning_tokens = input_tokens[:half_tokens_to_keep]
         end_tokens = input_tokens[-half_tokens_to_keep:]

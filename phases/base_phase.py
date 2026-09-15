@@ -44,6 +44,7 @@ class PhaseConfig:
 
 class BasePhase(ABC):
     AGENT_CLASSES: List[Type[BaseAgent]] = []
+    CHECK_AGENT_CLASS: Optional[Type[BaseAgent]] = None
 
     def __init__(self, workflow: "BaseWorkflow", **kwargs):
         self.workflow: "BaseWorkflow" = workflow
@@ -57,6 +58,7 @@ class BasePhase(ABC):
         self._done: bool = False
         self.iteration_count: int = 0
         self._last_agent_message: Optional[Message] = None
+        self._teacher_review_pending: bool = False
         logger.debug(f"Created {self.name} phase with config: {self.phase_config}")
 
     @abstractmethod
@@ -247,14 +249,19 @@ class BasePhase(ABC):
             await self._run_iteration()
 
             if self._phase_message.complete:
+                await self._finish_pending_teacher_review()
                 self._phase_message.set_submit()
                 break
 
             self.iteration_count += 1
         if not self._phase_message.complete:
-            await self._run_iteration(check=True)
+            if self._has_teacher_agent():
+                evaluation_message = await self._finish_pending_teacher_review()
+            else:
+                await self._run_iteration(check=True)
+                evaluation_message = self._last_agent_message
             summary = "no_submission"
-            if self._last_agent_message.success:
+            if evaluation_message and evaluation_message.success:
                 self._phase_message.set_success()
                 summary += "/success"
             else:
@@ -328,6 +335,34 @@ class BasePhase(ABC):
 
                 await self.set_last_agent_message(agent_message)
                 self._phase_message.add_child_message(agent_message)
+                if agent_id == "executor_agent":
+                    self._teacher_review_pending = True
+                elif agent_id == "teacher_agent":
+                    self._teacher_review_pending = False
+
+    def _has_teacher_agent(self) -> bool:
+        return any(agent_id == "teacher_agent" for agent_id, _ in self.agents)
+
+    def _last_message_is_from_check_agent(self) -> bool:
+        if self.CHECK_AGENT_CLASS is None or self._last_agent_message is None:
+            return False
+        return any(
+            agent_id == getattr(self._last_agent_message, "agent_id", None)
+            and isinstance(agent, self.CHECK_AGENT_CLASS)
+            for agent_id, agent in self.agents
+        )
+
+    async def _finish_pending_teacher_review(self) -> Optional[AgentMessage]:
+        """Evaluate and review the latest student turn before ending a cycle."""
+        if not self._has_teacher_agent() or not self._teacher_review_pending:
+            return None
+
+        if not self._last_message_is_from_check_agent():
+            await self._run_iteration(check=True)
+        evaluation_message = self._last_agent_message
+
+        await self._run_iteration()
+        return evaluation_message
 
     async def _pause_phase(self) -> None:
         """Pause the phase if an iteration fails."""
@@ -393,6 +428,14 @@ class BasePhase(ABC):
         Returns:
             Tuple[str, BaseAgent]: A tuple containing the agent ID and the agent instance.
         """
+        if get_prev and self.CHECK_AGENT_CLASS is not None:
+            for agent_id, agent in self.agents:
+                if isinstance(agent, self.CHECK_AGENT_CLASS):
+                    return agent_id, agent
+            raise ValueError(
+                f"Check agent {self.CHECK_AGENT_CLASS.__name__} is not initialized"
+            )
+
         iteration = self.get_current_iteration()
         if get_prev:
             iteration -= 1

@@ -6,6 +6,7 @@ from agents.detect_patch_agent.detect_patch_agent import (
     DetectPatchAgentConfig,
 )
 from agents.executor_agent.executor_agent import ExecutorAgent
+from agents.teacher_agent import TeacherAgent
 from messages.message import Message
 from messages.phase_messages.phase_message import PhaseMessage
 from phases.bounty_phase import BountyPhase
@@ -26,7 +27,12 @@ logger = get_main_logger(__name__)
 class DetectPatchPhase(BountyPhase):
     """Phase responsible for patching vulnerabilities."""
 
-    AGENT_CLASSES: List[Type[BaseAgent]] = [DetectPatchAgent, ExecutorAgent]
+    AGENT_CLASSES: List[Type[BaseAgent]] = [
+        DetectPatchAgent,
+        ExecutorAgent,
+        TeacherAgent,
+    ]
+    CHECK_AGENT_CLASS = DetectPatchAgent
 
     def __init__(self, workflow: "BaseWorkflow", **kwargs):
         """
@@ -59,10 +65,12 @@ class DetectPatchPhase(BountyPhase):
             submit=self.submit,
         )
 
-        return {
+        agents = {
             "executor_agent": (ExecutorAgent, executor_config),
             "patch_agent": (DetectPatchAgent, patch_config),
         }
+        self.add_teacher_agent(agents)
+        return agents
 
     def define_resources(self) -> List[Tuple[ResourceType, BaseResourceConfig]]:
         """
@@ -124,6 +132,7 @@ class DetectPatchPhase(BountyPhase):
             bounty_number=self.bounty_number,
             skip_bounty_setup=True,
         )
+        self.add_teacher_resource(resource_configs)
 
         logger.debug("Exiting define_resources for DetectPatchPhase")
         return resource_configs

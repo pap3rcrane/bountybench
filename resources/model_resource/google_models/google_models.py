@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 import google.generativeai as gemini
 
@@ -10,10 +10,17 @@ from resources.model_resource.model_response import ModelResponse
 class GoogleModels(ModelProvider):
     def __init__(self):
         self.client = None  # We'll initialize this later with the specific model
+        self._client_key = None
 
-    def create_client(self, model: str) -> gemini.GenerativeModel:
+    def create_client(
+        self, model: str, system_prompt: Optional[str] = None
+    ) -> gemini.GenerativeModel:
         gemini.configure(api_key=self._api_key())
-        return gemini.GenerativeModel(model)
+        model_id = model.split("/", 1)[-1]
+        return gemini.GenerativeModel(
+            model_id,
+            system_instruction=system_prompt,
+        )
 
     def request(
         self,
@@ -22,9 +29,12 @@ class GoogleModels(ModelProvider):
         temperature: float,
         max_tokens: int,
         stop_sequences: List[str],
+        system_prompt: Optional[str] = None,
     ) -> ModelResponse:
-        if self.client is None or self.client.model_name != model:
-            self.client = self.create_client(model)
+        client_key = (model, system_prompt)
+        if self.client is None or self._client_key != client_key:
+            self.client = self.create_client(model, system_prompt=system_prompt)
+            self._client_key = client_key
 
         start_time = datetime.now()
         status_code = None

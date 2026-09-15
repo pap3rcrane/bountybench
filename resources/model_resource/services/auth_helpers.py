@@ -61,6 +61,32 @@ def _auth_together_api_key(
     return False, response.text
 
 
+def _auth_openrouter_api_key(
+    api_key: str, model_name: str = None, verify_model: bool = False
+) -> Tuple[bool, str]:
+    """Validate an OpenRouter key and, optionally, a model slug."""
+    url = "https://openrouter.ai/api/v1/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        try:
+            if not verify_model or model_name is None:
+                return True, ""
+
+            openrouter_model_name = model_name.removeprefix("openrouter/")
+            valid_models = [model["id"] for model in response.json()["data"]]
+            if openrouter_model_name not in valid_models:
+                raise ValueError(
+                    f"Model {openrouter_model_name} not found on OpenRouter."
+                )
+            return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    return False, response.text
+
+
 ## Individual providers
 def _auth_openai_api_key(
     api_key: str, model_name: str = None, verify_model: bool = False

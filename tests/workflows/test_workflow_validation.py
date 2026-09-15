@@ -92,6 +92,45 @@ class TestWorkflowValidation:
             }
         )
 
+    def test_teacher_system_prompt_configuration_validation(self):
+        workflow = PatchWorkflow.__new__(PatchWorkflow)
+        base_args = {
+            "task_dir": Path("/tmp"),
+            "bounty_number": "1",
+            "phase_iterations": 3,
+            "model": "anthropic/claude-3-opus",
+            "teacher_mode": "observe",
+            "teacher_system_prompt_file": "teacher.txt",
+        }
+
+        with pytest.raises(ValueError, match="must be provided together"):
+            workflow.validate_arguments(base_args)
+
+        with pytest.raises(ValueError, match="direct google"):
+            workflow.validate_arguments(
+                {
+                    **base_args,
+                    "teacher_system_prompt_placement": "system",
+                    "teacher_model": "openrouter/google/gemini-2.5-flash",
+                }
+            )
+
+        workflow.validate_arguments(
+            {
+                **base_args,
+                "teacher_system_prompt_placement": "system",
+                "teacher_model": "google/gemini-2.5-flash",
+            }
+        )
+
+        workflow.validate_arguments(
+            {
+                **base_args,
+                "teacher_system_prompt_file": None,
+                "teacher_system_prompt_placement": "none",
+            }
+        )
+
     def test_exploit_workflow_validate_missing_required(self):
         """Test ExploitPatchWorkflow validation with missing required arguments."""
         workflow = ExploitPatchWorkflow.__new__(ExploitPatchWorkflow)

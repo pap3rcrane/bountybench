@@ -100,6 +100,7 @@ AZURE_OPENAI_ENDPOINT={AZURE_OPENAI_ENDPOINT}
 GOOGLE_API_KEY={GOOGLE_API_KEY}
 HELM_API_KEY={HELM_API_KEY}
 OPENAI_API_KEY={OPENAI_API_KEY}
+OPENROUTER_API_KEY={OPENROUTER_API_KEY}
 TOGETHER_API_KEY={TOGETHER_API_KEY}
 XAI_API_KEY={XAI_API_KEY}
 ```
@@ -145,6 +146,210 @@ Running workflows from CLI should use `runner.py` module. Each runnable workflow
 - If `--use_mock_model` is True, then `--use_helm` parameter is ignored
 - The `--use_helm` parameter determines whether to use Helm as the model provider
 
+Teacher support is optional. A teacher-enabled command must provide `--teacher_mode` and
+`--teacher_system_prompt_placement`. The teacher never receives an environment resource
+and therefore cannot run commands or submit work.
+
+The system prompt placement must be selected explicitly:
+
+- `none`: omits the custom teacher prompt. The original benchmark task remains ahead of
+  the trace in the user message. For `objective_rewrite`, the API system instruction
+  contains only the required JSON response format.
+- `prepend`: prepends the TXT file contents and original benchmark task to the teacher's
+  user message, followed by the trace.
+- `system`: passes the TXT file contents and original benchmark task to Gemini together
+  as its API-level `system_instruction`; only the trace remains in the user message.
+  This placement requires a direct `google/...` Gemini teacher model.
+
+`--teacher_system_prompt_file` is required for `prepend` and `system`, and must be
+omitted for `none`.
+
+For true Gemini system-prompt transport, use, for example,
+`--teacher_model google/gemini-2.5-flash` together with
+`--teacher_system_prompt_placement system`. Gemini models routed through OpenRouter do
+not use this placement.
+
+The available modes are:
+
+- `observe`: runs after the evaluator on every student turn. It sees the original
+  benchmark task followed by only student model output, commands, and environment
+  responses. Its response is logged but hidden from the student, and prior teacher
+  observations are not included in later teacher inputs.
+- `steer`: receives the same original-task and student-only trace as `observe`, then
+  places its response in the student's context for the next turn.
+- `objective_rewrite`: consumes exactly three task-and-student-trace blocks from three
+  teacher-free source runs, writes a strict
+  `{"objective": "..."}` file, and immediately launches one teacher-free student run in
+  which that objective replaces the applicable `DETECT_DESCRIPTION`,
+  `EXPLOIT_DESCRIPTION`, or `PATCH_DESCRIPTION`. Combined workflows use one objective
+  for both phases. Generated source runs use the same workflow arguments and clean
+  environment setup; no seed is passed. Invalid or extra teacher JSON fails immediately.
+  Its five `*_task.txt` teacher prompts each contain the required JSON response format;
+  the no-custom-prompt baseline uses only that format as its API system instruction.
+
+Example of per-turn steering:
+
+```bash
+python -m workflows.runner --workflow-type detect_workflow \
+    --task_dir bountytasks/lunary \
+    --bounty_number 0 \
+    --model openrouter/deepseek/deepseek-chat-v3-0324 \
+    --teacher_model openrouter/deepseek/deepseek-v4-pro \
+    --teacher_system_prompt_file prompts/teacher_agent_system_prompt.txt \
+    --teacher_system_prompt_placement prepend \
+    --teacher_mode steer \
+    --phase_iterations 30
+```
+
+Generate three source runs, rewrite the objective, and launch the next student run:
+
+```bash
+python -m workflows.runner --workflow-type detect_workflow \
+    --task_dir bountytasks/lunary \
+    --bounty_number 0 \
+    --model openrouter/deepseek/deepseek-chat-v3-0324 \
+    --teacher_model openrouter/deepseek/deepseek-v4-pro \
+    --teacher_system_prompt_file prompts/teacher_agent_system_prompt.txt \
+    --teacher_system_prompt_placement prepend \
+    --teacher_mode objective_rewrite \
+    --generate_source_runs \
+    --phase_iterations 30
+```
+
+To use existing runs instead, replace `--generate_source_runs` with
+`--source_logs LOG_1 LOG_2 LOG_3`. Objective files are written to
+`generated_objectives/` by default; change this with `--objective_output_dir`.
+Teacher responses are recorded as `teacher_agent` actions in normal workflow JSON logs.
+The automatic objective-rewrite run records its teacher model, system prompt file,
+placement, three source logs, and rewritten objective in the final workflow log metadata.
+Commands that omit all teacher flags run without a teacher.
+
+The `run_teacher_matrix.sh` batch launcher exercises the uploaded prompt groups over
+three disjoint environment sets, one for each teacher mode.
+
+Each launcher contains nine `(repository, bounty, workflow)` environments split evenly
+across detect, exploit, and patch. Each environment runs its five mode-specific prompts
+with both `prepend` and `system` placement, five times per configuration, followed by five
+teacher-active `none` baseline runs. That is 495 top-level runs per launcher. Every
+`objective_rewrite` run also generates three fresh teacher-free source runs before its
+rewritten-objective student run.
+
+Select only the user-message (`prepend`) variant, only Gemini's API system-instruction
+variant, or both variants with `--prompt-placement user`, `system`, or `both`. The
+default is `both`, and the five teacher-active `none` baseline runs remain included for
+all three selections. A single-placement matrix contains 270 top-level runs.
+
+Rebuild the backend once so it contains the runner changes and mounts the prompt folder:
+
+```bash
+docker compose up -d --build --force-recreate backend
+```
+
+Run a matrix with a progress-focused terminal:
+
+```bash
+./run_teacher_matrix.sh
+```
+
+The launcher runs five repositories concurrently by default. Each job receives its own
+`backend-worker-N` container, repository filesystem, and Docker-in-Docker volume, while
+all configurations for the same repository remain sequential. This prevents concurrent
+runs from resetting the same Git checkout or Docker environment. Use `--jobs 1` through
+`--jobs 5` to change the limit:
+
+```bash
+./run_teacher_matrix.sh --jobs 3
+```
+
+The isolated workers are stopped when the launcher exits. Their named Docker volumes are
+retained so later runs can reuse downloaded images; use
+`--prune-dind-between-repositories` when storage is more important than cache reuse.
+
+Run only selected modes with a comma-separated list:
+
+```bash
+./run_teacher_matrix.sh --modes observe,steer
+```
+
+Run only the API-level system-prompt configurations (plus the baseline):
+
+```bash
+./run_teacher_matrix.sh --prompt-placement system
+```
+
+Resume from one or more earlier status indexes without rerunning configurations that
+already completed successfully:
+
+```bash
+./run_teacher_matrix.sh \
+    --modes observe \
+    --skip-configurations-from runs/observe/TIMESTAMP/run_status.jsonl
+```
+
+The skip loader deliberately reads only top-level `configuration` records whose status
+is `success`. It does not skip failures or a configuration whose student run completed
+but whose top-level configuration record had not yet finalized. Skipped configurations
+are written into the new status index with status `skipped` for complete accounting.
+
+With no `--modes` flag, the launcher runs `observe`, `steer`, and
+`objective_rewrite` sequentially. Run `./run_teacher_matrix.sh --help` for all flags.
+
+The outer `tqdm` bar tracks completed configurations and estimates the remaining time
+from their complete elapsed durations, including environment setup, model calls,
+evaluation, and cleanup. Up to five job bars track each active workflow's completed
+iterations out of 300. Objective rewriting labels `source_1`, `source_2`, `source_3`,
+the teacher rewrite, and the final `rewritten_objective` student separately.
+
+To reclaim Docker-in-Docker storage after each repository finishes, add:
+
+```bash
+./run_teacher_matrix.sh --prune-dind-between-repositories
+```
+
+This removes unused inner containers, networks, volumes, dangling images, and build
+cache. It deliberately preserves tagged images such as `cybench/bountyagent:latest`.
+Cleanup failures are reported as warnings and do not stop later repository runs.
+
+Detailed child output is saved under `batch_logs/<teacher-mode>/<timestamp>/` instead of
+flooding the terminal. Add `--verbose` to stream those lines too, or `--no-progress` for
+plain CI/redirected output.
+
+Every invocation also writes a compact status index to
+`runs/<teacher-mode>/<timestamp>/run_status.jsonl`. It contains batch details, one status
+record per top-level configuration, and one status record for every student workflow.
+The student roles are `normal`, or `source_1` through `source_3` plus
+`rewritten_objective`. Records contain identifiers, repository, bounty, workflow, system
+prompt name (or `none`), repetition 1–5, teacher type/model, timestamps, duration, exit
+code, status, assigned backend worker, concise error, and pointers to the detailed logs.
+They do not duplicate prompts, model responses, commands, or environment output. A
+student that never starts because an earlier stage failed is recorded as `skipped`.
+
+Set `RUNS_ROOT` or `BATCH_LOG_ROOT` to relocate either output tree.
+
+Preview a matrix without calling either model:
+
+```bash
+BATCH_LOG_ROOT=/tmp/bountybench-matrix ./run_teacher_matrix.sh \
+    --modes observe --dry-run
+```
+
+Print the complete Gemini prompt payload for every detect/exploit/patch workflow,
+uploaded system prompt, and `prepend`/`system` placement pair:
+
+```bash
+python scripts/print_teacher_prompts.py \
+    --output teacher_prompt_previews/all_teacher_prompts.txt
+```
+
+This is a dry test: it uses deterministic representative traces and the production
+prompt-building code, but does not call Gemini or start Docker. Each section prints the
+exact `system_instruction`, `contents`, and generation configuration that would be sent
+for that fixture. Use `--format json` for structured output, or filter with repeatable
+`--workflow`, `--prompt`, and `--placement` flags.
+
+Then launch any group directly. Failures are recorded in `run_status.jsonl` and the
+individual configuration log, and the remaining configurations continue running.
+
 ```bash
 python -m workflows.runner --workflow-type WORKFLOW_TYPE [OPTIONS]
 ```
@@ -153,6 +358,8 @@ Available workflow types:
 - `detect_workflow`:
 - `exploit_workflow`:
 - `patch_workflow`:
+- `detect_patch_workflow`:
+- `exploit_patch_workflow`:
 
 Required flags vary by workflow type.
 
@@ -270,4 +477,3 @@ To resolve this issue, add the absolute path of your `bountybench` directory to 
 3. **Verify the Configuration:**
    - After Docker restarts, try running your `bountybench` workflow again.
    - The error should be resolved, allowing Docker to access the necessary directories.
-

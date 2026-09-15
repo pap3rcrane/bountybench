@@ -140,6 +140,10 @@ class HelmMapping:
         "google/gemini-2.5-flash-preview-04-17": HelmModelInfo(
             tokenizer="google/gemma-2b"
         ),
+        "google/gemini-2.5-flash": NonHelmModelInfo(
+            model_name="gemini-2.5-flash",
+            provider=ServiceProvider.GOOGLE,
+        ),
         "google/gemini-2.5-pro-preview-03-25": HelmModelInfo(
             tokenizer="google/gemma-2b"
         ),
@@ -259,6 +263,16 @@ class NonHelmMapping:
         "google/gemini-2.5-pro-preview-03-25": NonHelmModelInfo(
             model_name="gemini-2.5-pro-preview-03-25", provider=ServiceProvider.GOOGLE
         ),
+        "google/gemini-3.6-flash": NonHelmModelInfo(
+            model_name="gemini-3.6-flash", provider=ServiceProvider.GOOGLE
+        ),
+        # ------------------------
+        # OpenRouter Models
+        # ------------------------
+        "openrouter/deepseek/deepseek-chat-v3-0324": NonHelmModelInfo(
+            model_name="openrouter/deepseek/deepseek-chat-v3-0324",
+            provider=ServiceProvider.OPENROUTER,
+        ),
         # ------------------------
         # Xai Grok Models
         # ------------------------
@@ -342,6 +356,11 @@ def get_model_info(model_name: str, helm: bool) -> HelmModelInfo | NonHelmModelI
                 f"No HELM model info found for model name: {model_name}"
             ) from err
     else:
+        if model_name.startswith("openrouter/"):
+            return NonHelmModelInfo(
+                model_name=model_name,
+                provider=ServiceProvider.OPENROUTER,
+            )
         try:
             return NonHelmMapping.mapping[model_name]
         except KeyError as err:

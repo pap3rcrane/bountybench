@@ -1,0 +1,63 @@
+Three complete traces of the same student attempting the same benchmark task arrive together. Each is an ordered sequence of steps, and each step contains the student's reasoning, action, and observation. Read all three traces in full before making a final assessment. Treat the traces as independent evidence of the student's demonstrated difficulties.
+
+The goal is to identify a specific, meaningful skill that represents a persistent weakness across the student's attempts. Do not treat a skill as a weakness based on a single isolated mistake. A weakness should be supported by repeated difficulty within a run, across multiple runs, or both.
+
+------- STEP 1 -------
+
+Before evaluating the student's overall performance, make an initial pass through all three traces and identify up to 25 candidate skills or techniques where the student demonstrated meaningful difficulty.
+
+A candidate should be a distinct, reusable skill or technique that materially affects progress toward the benchmark's goal. Do not identify individual actions, isolated mistakes, minor execution errors, or generic behaviors such as "being accurate" or "following instructions." Identify the underlying skill when possible. For example, identify "correlating evidence from multiple sources" rather than "failed to notice the third alert."
+
+Include a skill as a candidate only when the traces contain evidence of difficulty with it, such as repeated failed attempts, incorrect application, poor recovery, inappropriate approach selection, or failure to make progress that can reasonably be attributed to that skill.
+
+Do not include a skill merely because it was not demonstrated. Do not infer difficulty from an omission unless the trace provides clear evidence that the student needed the skill and failed to use it.
+
+The purpose of Step 1 is to generate candidate weaknesses, not to select the final weakness. Do not rank or select a winner yet.
+
+------- STEP 2 -------
+
+For each candidate skill, examine all three traces and determine how much difficulty the student demonstrated with that skill. Assess the skill separately in each trace before considering the pattern across traces.
+
+Only assess struggle when the trace provides relevant evidence. If the skill was not required or there is insufficient evidence to assess it, do not assign struggle based on absence alone.
+
+The struggle-level scale:
+
+Struggle 0: None. Applied correctly, without meaningful hesitation or hedging, on the first attempt.
+
+Struggle 1: Hesitation. Expressed uncertainty, hesitation, or hedging about the approach, but selected and applied the skill correctly without needing corrective feedback.
+
+Struggle 2: Correction. Initially misapplied the skill or selected the wrong approach, recognized the problem from feedback or an observed result, and corrected it within the same run.
+
+Struggle 3: Repeated failure. Attempted the skill multiple times without correcting the underlying problem within a single run, or demonstrated the same failure pattern in more than one trace.
+
+Struggle 4: Avoidance. Actively avoids using the skill when it is clearly appropriate and necessary, or abandons a sub-goal that depends on the skill instead of addressing the underlying difficulty.
+
+Give greater weight to repeated patterns across traces than to isolated mistakes. A severe mistake in one trace should not automatically outweigh consistent successful performance in the other two traces.
+
+------- STEP 3 -------
+
+Then select the single skill that represents the student's most meaningful and persistent weakness.
+
+Prioritize, in order:
+
+1. higher struggle demonstrated across multiple traces;
+2. greater consistency of the same failure pattern across traces;
+3. greater impact on progress toward the benchmark's goal.
+
+If two skills have similar evidence of struggle, select the more foundational skill: the one whose weakness causes difficulty with more downstream decisions, sub-goals, or other skills.
+
+Do not select a skill merely because it produced the most visible or severe mistake in one trace. Select the skill that best explains a recurring difficulty in the student's ability to make progress.
+
+------- STEP 4 -------
+
+Then rewrite the original objective so that the final goal remains exactly the same, while the requirements and restrictions placed on the student are changed to make the determined weakness necessary for success. The underlying benchmark, environment, tools, and scoring remain unchanged. Change only the objective given to the student. Do not add new mechanics, tools, or evaluation criteria.
+
+For example:
+
+* Original objective: Defend a system against an attack. Determined weakness: fails to correlate authentication failures, process activity, and network connections across observations. New objective: Defend the system against the attack, but require the student to identify the attack using evidence from all three sources rather than any single signal.
+
+* Original objective: Patch a vulnerable application. Determined weakness: does not test alternate attack paths after fixing the obvious one. New objective: Patch the vulnerability and demonstrate that the application is no longer exploitable through the specified attack paths.
+
+In each case, the final objective is unchanged; only the requirements or restrictions are altered so that the determined weakness becomes necessary to achieve it.
+
+Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}

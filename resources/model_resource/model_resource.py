@@ -38,10 +38,11 @@ class ModelResourceConfig(BaseResourceConfig):
     max_output_tokens: int = field(default=4096)
     max_input_tokens: int = field(default=8192)
     use_helm: bool = field(default=False)
-    temperature: float = field(default=0.5)
+    temperature: float = field(default=0.0)
     stop_sequences: List[str] = field(default_factory=lambda: [])
     use_mock_model: bool = field(default=False)
     timeout: float = field(default=300.0)
+    preserve_oldest_input: bool = field(default=False)
     budget_tokens: Optional[int] = field(
         default=None
     )  # Claude 3.7 extended thinking budget_tokens
@@ -113,6 +114,7 @@ class ModelResource(RunnableBaseResource):
         self.stop_sequences = self._resource_config.stop_sequences
         self.use_mock_model = self._resource_config.use_mock_model
         self.timeout = self._resource_config.timeout
+        self.preserve_oldest_input = self._resource_config.preserve_oldest_input
         if not self.use_mock_model:
             self.model_provider: ModelProvider = self.get_model_provider()
         self.budget_tokens = (
@@ -164,6 +166,10 @@ class ModelResource(RunnableBaseResource):
                 )
 
                 model_provider = OpenAIModels()
+            elif model_prefix == "openrouter":
+                from resources.model_resource.openrouter_models import OpenRouterModels
+
+                model_provider = OpenRouterModels()
             elif model_prefix == "xai":
                 from resources.model_resource.xai_models.xai_models import XAIModels
 
@@ -255,7 +261,16 @@ class ModelResource(RunnableBaseResource):
             model_input=model_input,
             model=self.model,
             use_helm=self.helm,
+            preserve_oldest=self.preserve_oldest_input,
         )
+        system_prompt = getattr(input_message, "system_prompt", None)
+        if system_prompt is not None:
+            if self.helm or not self.model.startswith("google/"):
+                raise ValueError(
+                    "API-level system prompts are supported only for direct "
+                    "google/... Gemini models"
+                )
+            logger.info(f"Model system prompt:\n{system_prompt}")
         logger.info(f"Model input (truncated if over max tokens):\n{model_input}")
 
         try:
@@ -265,6 +280,7 @@ class ModelResource(RunnableBaseResource):
                 temperature=self.temperature,
                 max_tokens=self.max_output_tokens,
                 stop_sequences=self.stop_sequences,
+                system_prompt=system_prompt,
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -298,6 +314,8 @@ class ModelResource(RunnableBaseResource):
             "output_tokens": model_response.output_tokens,
             "time_taken_in_ms": model_response.time_taken_in_ms,
         }
+        if system_prompt is not None:
+            metadata["system_prompt"] = system_prompt
         if self.budget_tokens is not None:
             metadata["budget_tokens"] = self.budget_tokens
         metadata = (metadata,)
@@ -334,6 +352,7 @@ class ModelResource(RunnableBaseResource):
                 "temperature": self.temperature,
                 "stop_sequences": self.stop_sequences,
                 "use_mock_model": self.use_mock_model,
+                "preserve_oldest_input": self.preserve_oldest_input,
             }
             # if self.budget_tokens is not None:
             #     base_dict["config"]["budget_tokens"] = self.budget_tokens

@@ -33,6 +33,7 @@ VALID_MODELS = {
     "google/gemini-2.5-pro-preview-03-25": 8192,
     "deepseek-ai/DeepSeek-R1": 8192,
     "deepseek-ai/deepseek-r1": 8192,
+    "openrouter/deepseek/deepseek-chat-v3-0324": 8192,
     "openai/o3-2025-04-16-high-reasoning-effort": 8192,
     "openai/o4-mini-2025-04-16-high-reasoning-effort": 8192,
 }

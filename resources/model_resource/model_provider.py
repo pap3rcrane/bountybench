@@ -4,7 +4,7 @@ import time
 from abc import ABC, abstractmethod
 from pathlib import Path
 from time import sleep
-from typing import List
+from typing import List, Optional
 
 from dotenv import find_dotenv, load_dotenv
 
@@ -89,6 +89,7 @@ class ModelProvider(ABC):
         temperature: float,
         max_tokens: int,
         stop_sequences: List[str],
+        system_prompt: Optional[str] = None,
         logging_interval: float = 10.0,
         timeout: float = 300.0,
     ) -> ModelResponse:
@@ -97,6 +98,9 @@ class ModelProvider(ABC):
             - Spawns a thread to run the request method.
             - Logs a message while waiting for the request to finish.
             - Returns the ModelResponse once the thread is done.
+
+        The optional system prompt is forwarded only when one is provided. The direct
+        Gemini provider is currently the only provider that accepts it.
         """
         start_time = time.time()
 
@@ -106,8 +110,16 @@ class ModelProvider(ABC):
 
         def run_request():
             try:
+                request_kwargs = {}
+                if system_prompt is not None:
+                    request_kwargs["system_prompt"] = system_prompt
                 response = self.request(
-                    model, message, temperature, max_tokens, stop_sequences
+                    model,
+                    message,
+                    temperature,
+                    max_tokens,
+                    stop_sequences,
+                    **request_kwargs,
                 )
                 response_holder[0] = response
             except Exception as e:

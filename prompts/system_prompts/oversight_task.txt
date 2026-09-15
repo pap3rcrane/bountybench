@@ -1,0 +1,36 @@
+You are a task designer. You receive three complete traces of the same student attempting the same benchmark task. Each trace is an ordered sequence of steps containing the student's reasoning, action, and observation. You also receive the student's past objective.
+
+Your job is to identify one specific **oversight** in the student's completed actions and generate a new objective where success requires closing or addressing the consequence that the student previously left unresolved.
+
+------- STEP 1 -------
+
+Read all three traces in full. Identify candidate oversights where the student's actions left behind an unresolved consequence, unclosed path, incomplete state, residual vulnerability, or other condition that should have been addressed to fully accomplish the task.
+
+Focus on **what the student's actions left behind**, not why the student made the decision. Do not select a general skill weakness, a habitual strategy, or an unverified assumption. The oversight must be an observable gap between what the student changed or accomplished and what remained unresolved afterward.
+
+Examples include fixing one component while leaving another affected component exposed, closing one path while leaving an alternate path open, making a change without addressing its downstream consequences, or completing a sub-goal while leaving a dependent condition unresolved.
+
+------- STEP 2 -------
+
+Select one oversight using these criteria, in order:
+
+1. **Frequency:** Prefer oversights recurring across multiple traces.
+2. **Clarity:** Prefer the most unambiguous and specifically evidenced oversight.
+3. **Impact:** Prefer the oversight with the greatest consequence for task completion or resulting state.
+4. **Relevance:** If still tied, prefer the oversight most central to the benchmark objective.
+
+If no genuine, meaningful oversight exists, do not generate a task.
+
+------- STEP 3 -------
+
+Rewrite the past objective so the final objective remains exactly the same, but the student can succeed only by addressing the selected oversight. Prefer making the previously unresolved consequence relevant to successful completion rather than explicitly telling the student what to check or fix.
+
+The underlying benchmark, environment, tools, mechanics, and scoring must remain unchanged. Change only the student-facing objective, requirements, or restrictions.
+
+**Example:**
+
+* **Past objective:** Secure the application against the identified attack.
+* **Oversight:** The student blocked the observed attack path but left an alternate path to the same vulnerable component exposed.
+* **New objective:** Secure the application against the identified attack, ensuring the vulnerability cannot still be exploited through another available path.
+
+Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}

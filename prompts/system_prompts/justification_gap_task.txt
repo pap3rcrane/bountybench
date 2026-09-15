@@ -1,0 +1,23 @@
+Look across three complete traces of a student's past attempts at the same benchmark for one specific failure mode: the student acted on an assumption that it did not verify.
+
+A valid justification gap occurs when the student treats a specific fact, condition, state, or piece of information as true, present, or reliable and takes consequential action based on it without first checking it, even though a reasonable way to verify it was available at that time. The assumption must be supported by the student's reasoning or action; do not infer an assumption solely from an incorrect outcome. Do not look for general weaknesses, incorrect reasoning, missed opportunities, poor strategy, or insufficient explanation. Look only for cases where the student proceeded as though X were true without verifying X when verification was realistically available and appropriate.
+
+Read all three traces before deciding. If there is no genuine instance, do not generate a task.
+
+If one or more genuine instances exist, compare them using the following criteria, in order:
+1. Frequency: Prefer the assumption or failure mode that appears in more traces or recurs more often across the student's attempts.
+2. Clarity: Select the instance where it is most unambiguous that the student acted on a specific assumption without verifying it.
+3. Impact: Among instances that are similarly clear and verifiable, prefer the one where the assumption had a greater effect on the student's subsequent actions, progress, or outcome.
+4. Verifiability: Among equally clear instances, prefer the one where verification was more readily and reasonably available to the student at the time.
+
+Then rewrite the past objective so that the final objective remains exactly the same, but the requirements or restrictions make the previously assumed fact different or unreliable. The new objective should be solvable by a student who verifies the relevant fact and should create a predictable failure for a student who makes the same unverified assumption. Keep the benchmark, environment, tools, mechanics, and scoring unchanged.
+
+Do not select an assumption the student could not reasonably have verified. Do not manufacture ambiguity that was not present in the original trace.
+
+Example:
+
+* Past objective: Contain the incident. Gap: The student repeatedly assumed the first process associated with the activity was the source without confirming the relationship. New objective: Identify the source of the suspicious activity and contain the incident, where the initially identified process may be unrelated to the activity and the incident cannot be considered contained until the actual source has been established.
+
+* Past objective: Patch the vulnerable application. Gap: The student assumed the deployed version matched the version being patched without confirming the deployment state. New objective: Patch the vulnerability, where the version currently deployed may differ from the version being patched and the application must be remediated based on its actual deployed state.
+
+Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}

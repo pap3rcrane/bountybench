@@ -2,12 +2,21 @@ import os
 import subprocess
 from abc import ABC
 from pathlib import Path
-from typing import Any, List, Type
+from typing import Any, Dict, List, Optional, Tuple, Type
 
-from agents.base_agent import BaseAgent
+from agents.base_agent import AgentConfig, BaseAgent
+from agents.teacher_agent import (
+    TeacherAgent,
+    TeacherAgentConfig,
+    TeacherMode,
+    TeacherSystemPromptPlacement,
+)
 from phases.base_phase import BasePhase
 from prompts.prompts import SUBMISSION_INSTRUCTIONS
 from prompts.vulnerability_prompts import get_specialized_instructions
+from resources.base_resource import BaseResourceConfig
+from resources.model_resource.model_resource import ModelResourceConfig
+from resources.resource_type import ResourceType
 from utils.logger import get_main_logger
 from workflows.base_workflow import BaseWorkflow
 from workflows.workflow_context import current_workflow_id
@@ -48,6 +57,55 @@ class BountyPhase(BasePhase, ABC):
         self.submit = kwargs.get("submit", True)
 
         super().__init__(workflow, **kwargs)
+
+    def teacher_agent_config(self) -> TeacherAgentConfig:
+        return TeacherAgentConfig(
+            system_prompt_file=self.workflow.params.get("teacher_system_prompt_file"),
+            system_prompt_placement=TeacherSystemPromptPlacement(
+                self.workflow.params["teacher_system_prompt_placement"]
+            ),
+            mode=TeacherMode(self.workflow.params["teacher_mode"]),
+        )
+
+    @property
+    def has_scheduled_teacher(self) -> bool:
+        return self.workflow.params.get("teacher_mode") in {
+            TeacherMode.OBSERVE.value,
+            TeacherMode.STEER.value,
+        }
+
+    def add_teacher_agent(
+        self,
+        agents: Dict[str, Tuple[Type[BaseAgent], Optional[AgentConfig]]],
+    ) -> None:
+        if self.has_scheduled_teacher:
+            agents["teacher_agent"] = (TeacherAgent, self.teacher_agent_config())
+
+    def add_teacher_resource(
+        self,
+        resource_configs: List[Tuple[ResourceType, BaseResourceConfig]],
+    ) -> None:
+        if self.has_scheduled_teacher:
+            resource_configs.append(
+                (ResourceType.TEACHER_MODEL, self.teacher_model_config())
+            )
+
+    def teacher_model_config(self) -> ModelResourceConfig:
+        return ModelResourceConfig.create(
+            model=self.workflow.params.get(
+                "teacher_model", "openrouter/deepseek/deepseek-v4-pro"
+            ),
+            use_helm=False,
+            use_mock_model=self.workflow.params.get("use_mock_model", False),
+            max_input_tokens=self.workflow.params.get(
+                "teacher_max_input_tokens", 131072
+            ),
+            max_output_tokens=self.workflow.params.get(
+                "teacher_max_output_tokens", 4096
+            ),
+            temperature=self.workflow.params.get("teacher_temperature", 0.0),
+            preserve_oldest_input=True,
+        )
 
     def _create_initial_agent_message(self) -> None:
         """Create the initial agent message for the bounty phase."""

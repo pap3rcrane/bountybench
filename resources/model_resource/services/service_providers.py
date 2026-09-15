@@ -7,6 +7,7 @@ from resources.model_resource.services.auth_helpers import (
     _auth_google_api_key,
     _auth_helm_api_key,
     _auth_openai_api_key,
+    _auth_openrouter_api_key,
     _auth_together_api_key,
     _auth_xai_api_key,
 )
@@ -16,6 +17,7 @@ class ServiceProvider(Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     OPENAI = "openai"
+    OPENROUTER = "openrouter"
     TOGETHER = "together"
     XAI = "xai"
     HELM = "helm"
@@ -38,6 +40,11 @@ PROVIDER_CONFIG: dict[ServiceProvider, ServiceProviderConfig] = {
         name="openai",
         api_key_name="OPENAI_API_KEY",
         auth_function=_auth_openai_api_key,
+    ),
+    ServiceProvider.OPENROUTER: ServiceProviderConfig(
+        name="openrouter",
+        api_key_name="OPENROUTER_API_KEY",
+        auth_function=_auth_openrouter_api_key,
     ),
     ServiceProvider.GOOGLE: ServiceProviderConfig(
         name="google",
