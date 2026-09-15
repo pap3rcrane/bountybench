@@ -91,8 +91,8 @@ COPY . .
 # Restore every benchmark repository to its committed submodule revision. This
 # keeps the image complete even when a host checkout has an empty worktree.
 RUN git config --global url."https://github.com/".insteadOf git@github.com: \
-    && git -C bountytasks submodule sync --recursive \
-    && git -C bountytasks submodule update --init --recursive --force
+    && git -C bountytasks submodule sync \
+    && git -C bountytasks submodule update --init --force --depth 1
 
 RUN touch .env
 
