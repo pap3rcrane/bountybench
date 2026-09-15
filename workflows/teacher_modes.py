@@ -164,6 +164,7 @@ async def rewrite_objective(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             preserve_oldest_input=True,
+            thinking_level="high" if model.startswith("google/") else None,
         ),
     )
     try:

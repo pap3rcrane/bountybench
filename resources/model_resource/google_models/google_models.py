@@ -1,7 +1,8 @@
 from datetime import datetime
 from typing import List, Optional
 
-import google.generativeai as gemini
+from google import genai
+from google.genai import types
 
 from resources.model_resource.model_provider import ModelProvider
 from resources.model_resource.model_response import ModelResponse
@@ -9,18 +10,12 @@ from resources.model_resource.model_response import ModelResponse
 
 class GoogleModels(ModelProvider):
     def __init__(self):
-        self.client = None  # We'll initialize this later with the specific model
-        self._client_key = None
+        self.client = None
 
     def create_client(
-        self, model: str, system_prompt: Optional[str] = None
-    ) -> gemini.GenerativeModel:
-        gemini.configure(api_key=self._api_key())
-        model_id = model.split("/", 1)[-1]
-        return gemini.GenerativeModel(
-            model_id,
-            system_instruction=system_prompt,
-        )
+        self, model: Optional[str] = None, system_prompt: Optional[str] = None
+    ) -> genai.Client:
+        return genai.Client(api_key=self._api_key())
 
     def request(
         self,
@@ -30,26 +25,32 @@ class GoogleModels(ModelProvider):
         max_tokens: int,
         stop_sequences: List[str],
         system_prompt: Optional[str] = None,
+        thinking_level: Optional[str] = None,
     ) -> ModelResponse:
-        client_key = (model, system_prompt)
-        if self.client is None or self._client_key != client_key:
-            self.client = self.create_client(model, system_prompt=system_prompt)
-            self._client_key = client_key
+        if self.client is None:
+            self.client = self.create_client()
 
+        model_id = model.split("/", 1)[-1]
         start_time = datetime.now()
         status_code = None
 
         try:
-            response = self.client.generate_content(
+            response = self.client.models.generate_content(
+                model=model_id,
                 contents=message,
-                generation_config=gemini.types.GenerationConfig(
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
                     temperature=temperature,
                     stop_sequences=stop_sequences,
                     max_output_tokens=max_tokens,
+                    thinking_config=(
+                        types.ThinkingConfig(thinking_level=thinking_level)
+                        if thinking_level is not None
+                        else None
+                    ),
                 ),
             )
 
-            # For successful responses, check if we can extract status code
             if hasattr(response, "response") and hasattr(
                 response.response, "status_code"
             ):
@@ -57,32 +58,31 @@ class GoogleModels(ModelProvider):
 
             end_time = datetime.now()
             response_request_duration = (end_time - start_time).total_seconds() * 1000
+            input_tokens = self.client.models.count_tokens(
+                model=model_id, contents=message
+            ).total_tokens
 
             return ModelResponse(
                 content=response.text,
-                input_tokens=self.client.count_tokens(message).total_tokens,
+                input_tokens=input_tokens,
                 output_tokens=response.usage_metadata.candidates_token_count,
                 time_taken_in_ms=response_request_duration,
                 status_code=status_code,
             )
         except Exception as e:
-            # Extract status code from Google API errors
             try:
-                # Google API exceptions might have status_code attribute
                 if hasattr(e, "status_code"):
                     status_code = e.status_code
                 elif hasattr(e, "response") and hasattr(e.response, "status_code"):
                     status_code = e.response.status_code
-                # Sometimes errors are included in error.details
                 elif hasattr(e, "details") and isinstance(e.details, list):
                     for detail in e.details:
                         if hasattr(detail, "status") and detail.status.isdigit():
                             status_code = int(detail.status)
                             break
-            except:
-                pass  # If we can't extract the code, just continue
+            except Exception:
+                pass
 
-            # Attach status code to the exception
             if status_code is not None:
                 e.status_code = status_code
             raise
@@ -94,6 +94,9 @@ class GoogleModels(ModelProvider):
         raise NotImplementedError("Decoding tokens is not supported for Gemini models")
 
     def get_num_tokens(self, model: str, message: str) -> int:
-        if self.client is None or self.client.model_name != model:
-            self.client = self.create_client(model)
-        return self.client.count_tokens(input).total_tokens
+        if self.client is None:
+            self.client = self.create_client()
+        model_id = model.split("/", 1)[-1]
+        return self.client.models.count_tokens(
+            model=model_id, contents=message
+        ).total_tokens

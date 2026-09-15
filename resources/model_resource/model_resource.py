@@ -43,6 +43,7 @@ class ModelResourceConfig(BaseResourceConfig):
     use_mock_model: bool = field(default=False)
     timeout: float = field(default=300.0)
     preserve_oldest_input: bool = field(default=False)
+    thinking_level: Optional[str] = field(default=None)
     budget_tokens: Optional[int] = field(
         default=None
     )  # Claude 3.7 extended thinking budget_tokens
@@ -80,6 +81,14 @@ class ModelResourceConfig(BaseResourceConfig):
             raise ValueError("max_input_tokens must be positive")
         if self.max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be positive")
+        if self.thinking_level not in {None, "minimal", "low", "medium", "high"}:
+            raise ValueError("thinking_level must be minimal, low, medium, or high")
+        if self.thinking_level is not None and (
+            self.use_helm or not self.model.startswith("google/")
+        ):
+            raise ValueError(
+                "thinking_level is supported only for direct google/... Gemini models"
+            )
         if not self.use_mock_model:
             verify_and_auth_api_key(self.model, self.use_helm)
 
@@ -115,6 +124,7 @@ class ModelResource(RunnableBaseResource):
         self.use_mock_model = self._resource_config.use_mock_model
         self.timeout = self._resource_config.timeout
         self.preserve_oldest_input = self._resource_config.preserve_oldest_input
+        self.thinking_level = self._resource_config.thinking_level
         if not self.use_mock_model:
             self.model_provider: ModelProvider = self.get_model_provider()
         self.budget_tokens = (
@@ -281,6 +291,7 @@ class ModelResource(RunnableBaseResource):
                 max_tokens=self.max_output_tokens,
                 stop_sequences=self.stop_sequences,
                 system_prompt=system_prompt,
+                thinking_level=self.thinking_level,
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -316,6 +327,8 @@ class ModelResource(RunnableBaseResource):
         }
         if system_prompt is not None:
             metadata["system_prompt"] = system_prompt
+        if self.thinking_level is not None:
+            metadata["thinking_level"] = self.thinking_level
         if self.budget_tokens is not None:
             metadata["budget_tokens"] = self.budget_tokens
         metadata = (metadata,)

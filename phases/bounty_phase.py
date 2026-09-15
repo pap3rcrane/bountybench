@@ -91,10 +91,11 @@ class BountyPhase(BasePhase, ABC):
             )
 
     def teacher_model_config(self) -> ModelResourceConfig:
+        model = self.workflow.params.get(
+            "teacher_model", "openrouter/deepseek/deepseek-v4-pro"
+        )
         return ModelResourceConfig.create(
-            model=self.workflow.params.get(
-                "teacher_model", "openrouter/deepseek/deepseek-v4-pro"
-            ),
+            model=model,
             use_helm=False,
             use_mock_model=self.workflow.params.get("use_mock_model", False),
             max_input_tokens=self.workflow.params.get(
@@ -105,6 +106,7 @@ class BountyPhase(BasePhase, ABC):
             ),
             temperature=self.workflow.params.get("teacher_temperature", 0.0),
             preserve_oldest_input=True,
+            thinking_level="high" if model.startswith("google/") else None,
         )
 
     def _create_initial_agent_message(self) -> None:

@@ -90,6 +90,7 @@ class ModelProvider(ABC):
         max_tokens: int,
         stop_sequences: List[str],
         system_prompt: Optional[str] = None,
+        thinking_level: Optional[str] = None,
         logging_interval: float = 10.0,
         timeout: float = 300.0,
     ) -> ModelResponse:
@@ -99,8 +100,7 @@ class ModelProvider(ABC):
             - Logs a message while waiting for the request to finish.
             - Returns the ModelResponse once the thread is done.
 
-        The optional system prompt is forwarded only when one is provided. The direct
-        Gemini provider is currently the only provider that accepts it.
+        Optional Gemini-only request settings are forwarded only when provided.
         """
         start_time = time.time()
 
@@ -113,6 +113,8 @@ class ModelProvider(ABC):
                 request_kwargs = {}
                 if system_prompt is not None:
                     request_kwargs["system_prompt"] = system_prompt
+                if thinking_level is not None:
+                    request_kwargs["thinking_level"] = thinking_level
                 response = self.request(
                     model,
                     message,

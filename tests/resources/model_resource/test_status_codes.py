@@ -1,8 +1,6 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-import google.generativeai as gemini
-
 from resources.model_resource.anthropic_models.anthropic_models import AnthropicModels
 from resources.model_resource.google_models.google_models import GoogleModels
 from resources.model_resource.model_response import ModelResponse
@@ -124,33 +122,30 @@ class TestModelStatusCodes(unittest.TestCase):
         # Setup for Google model test
         mock_api_key.return_value = "test_key"
 
-        # Mock gemini configuration
-        with patch.object(gemini, "configure") as mock_configure:
-            # Create a mock error with status code - Google errors typically have a response attribute
-            mock_error = Exception("API error")
-            mock_response = MagicMock()
-            mock_response.status_code = 403
-            mock_error.response = mock_response
+        # Create a mock error with status code - Google errors typically have a response attribute
+        mock_error = Exception("API error")
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+        mock_error.response = mock_response
 
-            # Mock the GenerativeModel instance
-            mock_model = MagicMock()
-            mock_model.generate_content.side_effect = mock_error
-            mock_create_client.return_value = mock_model
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = mock_error
+        mock_create_client.return_value = mock_client
 
-            # Test and verify
-            google_model = GoogleModels()
-            with self.assertRaises(Exception) as context:
-                google_model.request(
-                    model="google/gemini-pro",
-                    message="Test message",
-                    temperature=0.7,
-                    max_tokens=100,
-                    stop_sequences=[],
-                )
+        # Test and verify
+        google_model = GoogleModels()
+        with self.assertRaises(Exception) as context:
+            google_model.request(
+                model="google/gemini-pro",
+                message="Test message",
+                temperature=0.7,
+                max_tokens=100,
+                stop_sequences=[],
+            )
 
-            # Our error extraction should attach a status_code
-            self.assertTrue(hasattr(context.exception, "status_code"))
-            self.assertEqual(context.exception.status_code, 403)
+        # Our error extraction should attach a status_code
+        self.assertTrue(hasattr(context.exception, "status_code"))
+        self.assertEqual(context.exception.status_code, 403)
 
     @patch.object(TogetherModels, "create_client")
     @patch.object(TogetherModels, "_api_key")

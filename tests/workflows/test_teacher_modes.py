@@ -25,7 +25,7 @@ from workflows.teacher_modes import (
 )
 
 OBJECTIVE_RESPONSE_FORMAT = (
-    'Return exactly one valid JSON object with this schema and no surrounding text: '
+    "Return exactly one valid JSON object with this schema and no surrounding text: "
     '{"objective": "..."}'
 )
 
@@ -188,6 +188,7 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
     model_config = model_resource.call_args.args[1]
     assert objective == "Better objective."
     assert model_config.preserve_oldest_input is True
+    assert model_config.thinking_level == "high"
     assert model_input.system_prompt.startswith("ACTUAL SYSTEM PROMPT\n\n")
     assert model_input.system_prompt.count("ORIGINAL BENCHMARK TASK:") == 3
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory

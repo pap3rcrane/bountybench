@@ -164,6 +164,13 @@ def test_observe_schedules_teacher_after_native_agents(tmp_path):
     assert check_agent_id == "detect_agent"
 
 
+def test_direct_gemini_teacher_uses_high_thinking(tmp_path):
+    phase = make_detect_phase(tmp_path, TeacherMode.OBSERVE.value)
+    phase.workflow.params["teacher_model"] = "google/gemini-3.6-flash"
+
+    assert phase.teacher_model_config().thinking_level == "high"
+
+
 def test_observe_sees_only_student_trace_and_hides_response(tmp_path):
     agent = make_agent(tmp_path, mode=TeacherMode.OBSERVE)
     result = asyncio.run(agent.run([make_history()]))
