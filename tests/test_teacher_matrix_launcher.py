@@ -173,6 +173,12 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     for arguments in mode_commands:
         mode = _argument_values(arguments, "--teacher-mode")[0]
         assert _argument_values(arguments, "--jobs") == ["30"]
+        assert _argument_values(arguments, "--teacher-max-input-tokens") == [
+            "1048576"
+        ]
+        assert _argument_values(arguments, "--teacher-max-output-tokens") == [
+            "65536"
+        ]
         workers_by_mode[mode] = set(_argument_values(arguments, "--backend-container"))
 
     assert workers_by_mode == {

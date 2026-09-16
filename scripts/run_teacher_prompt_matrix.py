@@ -41,6 +41,8 @@ PHASE_ITERATIONS = 300
 REPETITIONS = 5
 MAX_INPUT_TOKENS = 1048576
 MAX_OUTPUT_TOKENS = 65536
+TEACHER_MAX_INPUT_TOKENS = 1048576
+TEACHER_MAX_OUTPUT_TOKENS = 65536
 PLACEMENTS = ("prepend", "system")
 PROMPT_PLACEMENT_MAP = {
     "user": ("prepend",),
@@ -288,6 +290,13 @@ def parse_backend_log_root(value: str) -> tuple[str, Path]:
     return container, Path(path).expanduser().resolve()
 
 
+def positive_int(value: str) -> int:
+    parsed = int(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be a positive integer")
+    return parsed
+
+
 def build_configurations(
     *,
     environments: Iterable[Environment],
@@ -525,6 +534,8 @@ class MatrixRunner:
             "invocation": shlex.join(sys.argv),
             "student_model": STUDENT_MODEL,
             "teacher_model": TEACHER_MODEL,
+            "teacher_max_input_tokens": self.args.teacher_max_input_tokens,
+            "teacher_max_output_tokens": self.args.teacher_max_output_tokens,
             "phase_iterations": PHASE_ITERATIONS,
             "repetitions": REPETITIONS,
             "concurrent_jobs": self.args.jobs,
@@ -670,6 +681,10 @@ class MatrixRunner:
             self.args.teacher_mode,
             "--teacher_system_prompt_placement",
             configuration.placement,
+            "--teacher_max_input_tokens",
+            str(self.args.teacher_max_input_tokens),
+            "--teacher_max_output_tokens",
+            str(self.args.teacher_max_output_tokens),
             "--phase_iterations",
             str(PHASE_ITERATIONS),
             "--max_input_tokens",
@@ -1315,6 +1330,24 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "Run custom prompts as a user-message prefix, a Gemini system "
             "instruction, or both variants separately."
+        ),
+    )
+    parser.add_argument(
+        "--teacher-max-input-tokens",
+        type=positive_int,
+        default=TEACHER_MAX_INPUT_TOKENS,
+        help=(
+            "Maximum Gemini teacher input context "
+            f"(default: {TEACHER_MAX_INPUT_TOKENS})."
+        ),
+    )
+    parser.add_argument(
+        "--teacher-max-output-tokens",
+        type=positive_int,
+        default=TEACHER_MAX_OUTPUT_TOKENS,
+        help=(
+            "Maximum Gemini teacher response length "
+            f"(default: {TEACHER_MAX_OUTPUT_TOKENS})."
         ),
     )
     parser.add_argument("--prompt-file", action="append", required=True)

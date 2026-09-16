@@ -17,6 +17,10 @@ set -uo pipefail
 #       Select where custom teacher prompts are sent. "user" uses the existing
 #       prepend placement, "system" uses Gemini's API system instruction, and
 #       "both" runs both variants separately. Default: both.
+#   --teacher-max-input-tokens NUMBER
+#       Maximum Gemini teacher input context. Default: 1048576, the model maximum.
+#   --teacher-max-output-tokens NUMBER
+#       Maximum Gemini teacher response length. Default: 65536, the model maximum.
 #   --skip-configurations-from STATUS_JSONL
 #       May be repeated. Skip only finalized top-level configurations recorded
 #       with status "success" in a previous run_status.jsonl. In-progress
@@ -70,6 +74,8 @@ usage() {
     "  --modes MODE[,MODE...]              Modes to run; default is all three." \
     "  --jobs NUMBER|all                    Global configuration workers; all means 30." \
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
+    "  --teacher-max-input-tokens NUMBER    Gemini teacher input limit; default 1048576." \
+    "  --teacher-max-output-tokens NUMBER   Gemini teacher output limit; default 65536." \
     "  --skip-configurations-from FILE      Skip prior successful configurations." \
     "  --dry-run                           Plan and record without executing." \
     "  --prune-dind-between-repositories   Reclaim unused inner Docker storage." \
@@ -84,6 +90,8 @@ ORIGINAL_ARGUMENTS=("$@")
 SELECTED_MODES_CSV="observe,steer,objective_rewrite"
 SELECTED_JOBS="all"
 SELECTED_PROMPT_PLACEMENT="both"
+SELECTED_TEACHER_MAX_INPUT_TOKENS=1048576
+SELECTED_TEACHER_MAX_OUTPUT_TOKENS=65536
 SKIP_CONFIGURATION_SOURCES=()
 DRY_RUN=false
 FORWARD_ARGUMENTS=()
@@ -130,6 +138,30 @@ while [[ $# -gt 0 ]]; do
       SELECTED_PROMPT_PLACEMENT="${1#*=}"
       shift
       ;;
+    --teacher-max-input-tokens)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --teacher-max-input-tokens requires a positive integer.\n' >&2
+        exit 2
+      fi
+      SELECTED_TEACHER_MAX_INPUT_TOKENS="$2"
+      shift 2
+      ;;
+    --teacher-max-input-tokens=*)
+      SELECTED_TEACHER_MAX_INPUT_TOKENS="${1#*=}"
+      shift
+      ;;
+    --teacher-max-output-tokens)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --teacher-max-output-tokens requires a positive integer.\n' >&2
+        exit 2
+      fi
+      SELECTED_TEACHER_MAX_OUTPUT_TOKENS="$2"
+      shift 2
+      ;;
+    --teacher-max-output-tokens=*)
+      SELECTED_TEACHER_MAX_OUTPUT_TOKENS="${1#*=}"
+      shift
+      ;;
     --skip-configurations-from)
       if [[ $# -lt 2 || -z "$2" ]]; then
         printf 'ERROR: --skip-configurations-from requires a run_status.jsonl file.\n' >&2
@@ -165,6 +197,16 @@ done
 
 if [[ "$SELECTED_JOBS" != "all" && ! "$SELECTED_JOBS" =~ ^([1-9]|[12][0-9]|30)$ ]]; then
   printf 'ERROR: --jobs must be all or a number from 1 through 30.\n' >&2
+  exit 2
+fi
+
+if [[ ! "$SELECTED_TEACHER_MAX_INPUT_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'ERROR: --teacher-max-input-tokens must be a positive integer.\n' >&2
+  exit 2
+fi
+
+if [[ ! "$SELECTED_TEACHER_MAX_OUTPUT_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'ERROR: --teacher-max-output-tokens must be a positive integer.\n' >&2
   exit 2
 fi
 
@@ -524,6 +566,8 @@ run_mode() {
     --teacher-mode "$TEACHER_MODE"
     --jobs "$MATRIX_WORKER_COUNT"
     --prompt-placement "$SELECTED_PROMPT_PLACEMENT"
+    --teacher-max-input-tokens "$SELECTED_TEACHER_MAX_INPUT_TOKENS"
+    --teacher-max-output-tokens "$SELECTED_TEACHER_MAX_OUTPUT_TOKENS"
     --launcher "$0"
   )
 

@@ -8,7 +8,10 @@ from scripts.run_teacher_prompt_matrix import (
     Environment,
     MATRIX_BACKEND_CONTAINERS,
     MatrixRunner,
+    TEACHER_MAX_INPUT_TOKENS,
+    TEACHER_MAX_OUTPUT_TOKENS,
     build_configurations,
+    create_parser,
     load_successful_configuration_keys,
     parse_runner_event,
 )
@@ -21,6 +24,8 @@ def _args(*, mode):
         matrix_name=f"test_{mode}",
         teacher_mode=mode,
         prompt_placement="both",
+        teacher_max_input_tokens=TEACHER_MAX_INPUT_TOKENS,
+        teacher_max_output_tokens=TEACHER_MAX_OUTPUT_TOKENS,
         skip_configurations_from=[],
         prompt_file=[PROMPT_FILE],
         environment=[Environment("lunary", "0", "detect_workflow")],
@@ -32,6 +37,42 @@ def _args(*, mode):
         no_progress=True,
         jobs=1,
     )
+
+
+def test_teacher_token_limits_default_to_gemini_maxima_and_reach_workflow(
+    tmp_path, monkeypatch
+):
+    parser = create_parser()
+    parsed = parser.parse_args(
+        [
+            "--matrix-name",
+            "limits",
+            "--teacher-mode",
+            "observe",
+            "--prompt-file",
+            PROMPT_FILE,
+            "--environment",
+            "lunary|0|detect_workflow",
+            "--launcher",
+            "run_teacher_matrix.sh",
+        ]
+    )
+    assert parsed.teacher_max_input_tokens == 1048576
+    assert parsed.teacher_max_output_tokens == 65536
+
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    runner = MatrixRunner(parsed)
+    try:
+        command = runner._command(runner.configurations[0], "backend-service")
+    finally:
+        runner.progress.close()
+        runner.recorder.close()
+
+    input_index = command.index("--teacher_max_input_tokens")
+    output_index = command.index("--teacher_max_output_tokens")
+    assert command[input_index + 1] == "1048576"
+    assert command[output_index + 1] == "65536"
 
 
 def _event(event, **fields):
