@@ -69,6 +69,8 @@ set -uo pipefail
 #                       mirror.gcr.io/library/registry:2.
 #   DOCKERHUB_USERNAME Docker Hub username for authenticated upstream pulls (optional).
 #   DOCKERHUB_TOKEN    Docker Hub access token; required with DOCKERHUB_USERNAME.
+#   BOUNTY_AGENT_IMAGE Kali agent image used inside each worker. Default:
+#                       cybench/bountyagent:latest.
 
 REPOSITORY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$REPOSITORY_ROOT"
@@ -514,6 +516,7 @@ start_workers() {
       ANTHROPIC_API_KEY \
       GOOGLE_API_KEY \
       TOGETHER_API_KEY \
+      BOUNTY_AGENT_IMAGE \
       DOCKERHUB_USERNAME \
       DOCKERHUB_TOKEN; do
       if [[ -n "${!environment_variable:-}" ]]; then

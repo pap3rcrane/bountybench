@@ -21,7 +21,7 @@ from utils.logger import get_main_logger
 from utils.progress_logger import start_progress, stop_progress
 
 # Constants with type annotations
-DOCKER_IMAGE: str = "cybench/bountyagent:latest"
+DEFAULT_DOCKER_IMAGE: str = "cybench/bountyagent:latest"
 ENTRYPOINT: str = "/usr/local/bin/entrypoint.sh"
 DOCKER_CLIENT_INIT_TIMEOUT: int = 300
 
@@ -366,15 +366,16 @@ class KaliEnvResource(RunnableBaseResource):
     def _create_and_start_container(
         self, name: str, volumes: Optional[Dict[str, Dict[str, str]]], attempt: int
     ) -> Optional[Container]:
+        docker_image = os.getenv("BOUNTY_AGENT_IMAGE", DEFAULT_DOCKER_IMAGE)
         start_progress(
             f"Starting a new Docker container (Attempt {attempt + 1}/{MAX_RETRIES})..."
         )
         try:
             # Pull the latest image before starting the container
-            logger.debug(f"Pulling the latest Docker image: {DOCKER_IMAGE}")
+            logger.debug(f"Pulling the latest Docker image: {docker_image}")
             try:
-                self.client.images.pull(DOCKER_IMAGE)
-                logger.debug(f"Successfully pulled the latest image: {DOCKER_IMAGE}")
+                self.client.images.pull(docker_image)
+                logger.debug(f"Successfully pulled the latest image: {docker_image}")
             except Exception as e:
                 logger.warning(
                     f"Failed to pull the latest image: {e}. Will use existing image if available."
@@ -395,7 +396,7 @@ class KaliEnvResource(RunnableBaseResource):
             if disable_kali_docker:
                 logger.info("Starting Kali container without its nested Docker daemon.")
             container = self.client.containers.run(
-                image=DOCKER_IMAGE,
+                image=docker_image,
                 cgroupns="host",
                 network="shared_net",
                 volumes=volumes,

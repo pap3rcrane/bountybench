@@ -160,6 +160,25 @@ def test_disable_kali_docker_uses_tail_entrypoint(monkeypatch):
     resource.util.print_docker_log.assert_not_called()
 
 
+def test_bounty_agent_image_can_be_overridden(monkeypatch):
+    resource = object.__new__(KaliEnvResource)
+    resource.client = MagicMock()
+    resource.util = MagicMock()
+    container = MagicMock()
+    resource.client.containers.run.return_value = container
+    resource.util.wait_for_container.return_value = True
+    monkeypatch.setenv("BOUNTY_AGENT_IMAGE", "example/bountyagent:amd64")
+    monkeypatch.setenv("BOUNTYBENCH_DISABLE_KALI_DOCKER", "1")
+
+    result = resource._create_and_start_container(CONTAINER_NAME, VOLUME, 0)
+
+    assert result is container
+    resource.client.images.pull.assert_called_once_with("example/bountyagent:amd64")
+    assert resource.client.containers.run.call_args.kwargs["image"] == (
+        "example/bountyagent:amd64"
+    )
+
+
 def test_run_simple_command(kali_env_resource):
     command = "echo Hello"
     stdout, stderr = kali_env_resource.run_command(command)

@@ -54,6 +54,7 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
             "BATCH_LOG_ROOT": str(tmp_path / "batch_logs"),
             "RUNS_ROOT": str(tmp_path / "runs"),
             "MATRIX_WORKER_LOCK_DIRECTORY": str(tmp_path / "worker.lock"),
+            "BOUNTY_AGENT_IMAGE": "example/bountyagent:amd64",
         }
     )
 
@@ -171,6 +172,7 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         assert "BOUNTYBENCH_DISABLE_KALI_DOCKER=1" in (
             _argument_values(arguments, "--env")
         )
+        assert "BOUNTY_AGENT_IMAGE" in _argument_values(arguments, "--env")
         log_mount = next(volume for volume in volumes if volume.endswith(":/app/logs"))
         artifact_roots.add(str(Path(log_mount.split(":", 1)[0]).parent))
         assert worker_name in log_mount
