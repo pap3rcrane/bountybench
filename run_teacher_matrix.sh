@@ -5,13 +5,14 @@ set -uo pipefail
 # Public flags:
 #   --modes MODE[,MODE...]
 #       Select one or more teacher modes. Valid modes are observe, steer, and
-#       objective_rewrite. Selected modes run concurrently on disjoint workers.
-#       Default: observe,steer,objective_rewrite.
+#       objective_rewrite. Selected modes run in order and reuse the same global
+#       worker pool. Default: observe,steer,objective_rewrite.
 #   --jobs NUMBER|all
-#       Run up to NUMBER environments concurrently per selected mode. Each job owns
-#       one complete (repository, bounty, workflow) configuration sequence and uses
-#       a dedicated container, network, artifact directory, and Docker-in-Docker
-#       volume. Valid range: 1-30. Default: every environment (9 per mode, 27 total).
+#       Run up to NUMBER configurations concurrently. Configurations remain ordered
+#       by environment, so all work for one environment enters the worker pool before
+#       work for the next environment. Each job uses a dedicated container, network,
+#       artifact directory, and Docker-in-Docker volume. Valid range: 1-30. "all"
+#       means 30. Default: all.
 #   --prompt-placement user|system|both
 #       Select where custom teacher prompts are sent. "user" uses the existing
 #       prepend placement, "system" uses Gemini's API system instruction, and
@@ -30,9 +31,9 @@ set -uo pipefail
 #       Print and record every planned configuration without starting Docker
 #       environments or calling either model.
 #   --prune-dind-between-repositories
-#       After each environment, remove unused containers, networks, volumes,
-#       dangling images, and build cache from Docker-in-Docker. Tagged images
-#       such as cybench/bountyagent:latest are preserved.
+#       When a worker moves to another environment, remove its unused containers,
+#       networks, volumes, dangling images, and build cache from Docker-in-Docker.
+#       Tagged images such as cybench/bountyagent:latest are preserved.
 #   --verbose
 #       Stream complete child workflow logs to the terminal in addition to
 #       saving them under batch_logs/.
@@ -59,7 +60,7 @@ usage() {
     "" \
     "Options:" \
     "  --modes MODE[,MODE...]              Modes to run; default is all three." \
-    "  --jobs NUMBER|all                    Workers per mode; default all (9)." \
+    "  --jobs NUMBER|all                    Global configuration workers; all means 30." \
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
     "  --skip-configurations-from FILE      Skip prior successful configurations." \
     "  --dry-run                           Plan and record without executing." \
@@ -192,9 +193,6 @@ MATRIX_WORKER_COUNT=0
 ACTIVE_WORKER_SERVICES=()
 ACTIVE_WORKER_NETWORKS=()
 ACTIVE_WORKER_VOLUMES=()
-MODE_WORKER_COUNTS=()
-MODE_RUNNER_PIDS=()
-MODE_RUNNER_LOGS=()
 WORKERS_STARTED=false
 WORKER_LOCK_DIRECTORY="${MATRIX_WORKER_LOCK_DIRECTORY:-/tmp/bountybench-teacher-matrix-workers.lock}"
 WORKER_LOCK_ACQUIRED=false
@@ -205,18 +203,6 @@ else
   MATRIX_BATCH_LOG_ROOT="$REPOSITORY_ROOT/${BATCH_LOG_ROOT}"
 fi
 WORKER_ARTIFACT_ROOT="$MATRIX_BATCH_LOG_ROOT/matrix_workers/$MATRIX_LAUNCH_ID"
-
-stop_mode_runners() {
-  local pid
-  for pid in "${MODE_RUNNER_PIDS[@]+"${MODE_RUNNER_PIDS[@]}"}"; do
-    if kill -0 "$pid" 2>/dev/null; then
-      kill "$pid" 2>/dev/null || true
-    fi
-  done
-  for pid in "${MODE_RUNNER_PIDS[@]+"${MODE_RUNNER_PIDS[@]}"}"; do
-    wait "$pid" 2>/dev/null || true
-  done
-}
 
 stop_workers() {
   if [[ "$WORKERS_STARTED" == true ]]; then
@@ -405,33 +391,15 @@ configure_mode() {
 }
 
 resolve_worker_allocation() {
-  local mode environment_count mode_worker_count
-  MATRIX_WORKER_COUNT=0
-  MODE_WORKER_COUNTS=()
-  for mode in "${SELECTED_MODES[@]}"; do
-    configure_mode "$mode"
-    environment_count=${#ENVIRONMENTS[@]}
-    if [[ "$SELECTED_JOBS" == "all" || "$SELECTED_JOBS" -gt "$environment_count" ]]; then
-      mode_worker_count=$environment_count
-    else
-      mode_worker_count=$SELECTED_JOBS
-    fi
-    MODE_WORKER_COUNTS+=("$mode_worker_count")
-    MATRIX_WORKER_COUNT=$((MATRIX_WORKER_COUNT + mode_worker_count))
-  done
-
-  if ((MATRIX_WORKER_COUNT < 1 || MATRIX_WORKER_COUNT > MAX_MATRIX_WORKERS)); then
-    printf 'ERROR: selected modes require %s isolated workers; maximum is %s.\n' \
-      "$MATRIX_WORKER_COUNT" "$MAX_MATRIX_WORKERS" >&2
-    exit 2
+  if [[ "$SELECTED_JOBS" == "all" ]]; then
+    MATRIX_WORKER_COUNT=$MAX_MATRIX_WORKERS
+  else
+    MATRIX_WORKER_COUNT=$SELECTED_JOBS
   fi
 }
 
 run_mode() {
   local mode="$1"
-  local worker_start="$2"
-  local worker_count="$3"
-  local concurrent_modes="$4"
   configure_mode "$mode"
 
   local command=(
@@ -439,17 +407,13 @@ run_mode() {
     "$REPOSITORY_ROOT/scripts/run_teacher_prompt_matrix.py"
     --matrix-name "$MATRIX_NAME"
     --teacher-mode "$TEACHER_MODE"
-    --jobs "$worker_count"
+    --jobs "$MATRIX_WORKER_COUNT"
     --prompt-placement "$SELECTED_PROMPT_PLACEMENT"
     --launcher "$0"
   )
 
   local prompt_file environment argument skip_source worker_number worker_name
-  for ((
-    worker_number = worker_start;
-    worker_number < worker_start + worker_count;
-    worker_number++
-  )); do
+  for ((worker_number = 1; worker_number <= MATRIX_WORKER_COUNT; worker_number++)); do
     worker_name="backend-worker-$worker_number"
     command+=(--backend-container "$worker_name")
     command+=(
@@ -469,16 +433,12 @@ run_mode() {
   for argument in "${ORIGINAL_ARGUMENTS[@]+"${ORIGINAL_ARGUMENTS[@]}"}"; do
     command+=("--launcher-argument=$argument")
   done
-  if [[ "$concurrent_modes" == true ]]; then
-    command+=(--no-progress)
-  fi
-
-  printf 'Running teacher matrix mode: %s\n' "$mode"
+  printf 'Running teacher matrix mode: %s with %s configuration workers\n' \
+    "$mode" "$MATRIX_WORKER_COUNT"
   "${command[@]}" "${FORWARD_ARGUMENTS[@]+"${FORWARD_ARGUMENTS[@]}"}"
 }
 
 cleanup() {
-  stop_mode_runners
   stop_workers
 }
 
@@ -488,44 +448,15 @@ resolve_worker_allocation
 start_workers
 
 OVERALL_EXIT_CODE=0
-WORKER_START=1
-if [[ ${#SELECTED_MODES[@]} -eq 1 ]]; then
-  run_mode "${SELECTED_MODES[0]}" "$WORKER_START" "${MODE_WORKER_COUNTS[0]}" false
-  OVERALL_EXIT_CODE=$?
-else
-  for index in "${!SELECTED_MODES[@]}"; do
-    mode="${SELECTED_MODES[$index]}"
-    mode_worker_count="${MODE_WORKER_COUNTS[$index]}"
-    mode_log="$WORKER_ARTIFACT_ROOT/${mode}_runner.log"
-    MODE_RUNNER_LOGS+=("$mode_log")
-    printf 'Launching %s with %s isolated workers; output: %s\n' \
-      "$mode" "$mode_worker_count" "$mode_log"
-    run_mode "$mode" "$WORKER_START" "$mode_worker_count" true \
-      >"$mode_log" 2>&1 &
-    MODE_RUNNER_PIDS+=("$!")
-    WORKER_START=$((WORKER_START + mode_worker_count))
-  done
-
-  for index in "${!MODE_RUNNER_PIDS[@]}"; do
-    pid="${MODE_RUNNER_PIDS[$index]}"
-    mode="${SELECTED_MODES[$index]}"
-    mode_log="${MODE_RUNNER_LOGS[$index]}"
-    wait "$pid"
-    MODE_EXIT_CODE=$?
-    if [[ "$MODE_EXIT_CODE" -eq 130 ]]; then
-      stop_mode_runners
-      exit 130
-    fi
-    if [[ "$MODE_EXIT_CODE" -ne 0 ]]; then
-      OVERALL_EXIT_CODE=1
-      printf 'Teacher matrix mode %s failed; final output follows:\n' "$mode" >&2
-      tail -n 40 "$mode_log" >&2
-    else
-      printf 'Teacher matrix mode %s finished successfully.\n' "$mode"
-    fi
-  done
-fi
-
-MODE_RUNNER_PIDS=()
+for mode in "${SELECTED_MODES[@]}"; do
+  run_mode "$mode"
+  MODE_EXIT_CODE=$?
+  if [[ "$MODE_EXIT_CODE" -eq 130 ]]; then
+    exit 130
+  fi
+  if [[ "$MODE_EXIT_CODE" -ne 0 ]]; then
+    OVERALL_EXIT_CODE=1
+  fi
+done
 
 exit "$OVERALL_EXIT_CODE"

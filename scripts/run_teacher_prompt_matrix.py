@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from queue import Queue
+from queue import Empty, Queue
 from typing import Iterable, Optional, TextIO
 
 from tqdm import tqdm
@@ -36,7 +36,7 @@ STUDENT_MODEL = "openrouter/deepseek/deepseek-chat-v3-0324"
 TEACHER_MODEL = "google/gemini-3.6-flash"
 PRIMARY_BACKEND_CONTAINER = "backend-service"
 MATRIX_BACKEND_CONTAINERS = tuple(f"backend-worker-{number}" for number in range(1, 31))
-DEFAULT_ENVIRONMENT_WORKERS = 9
+DEFAULT_CONFIGURATION_WORKERS = 30
 PHASE_ITERATIONS = 300
 REPETITIONS = 5
 MAX_INPUT_TOKENS = 1048576
@@ -486,9 +486,6 @@ class MatrixRunner:
         self._state_lock = threading.Lock()
         self._active_processes = {}
         self._stop_event = threading.Event()
-        self._available_backends = Queue()
-        for backend_container in self.backend_containers:
-            self._available_backends.put(backend_container)
         self.failed_configurations = 0
         self.completed_configurations = 0
 
@@ -531,7 +528,8 @@ class MatrixRunner:
             "phase_iterations": PHASE_ITERATIONS,
             "repetitions": REPETITIONS,
             "concurrent_jobs": self.args.jobs,
-            "worker_scope": "environment",
+            "worker_scope": "configuration",
+            "scheduling_order": "environment_ordered",
             "backend_containers": self.backend_containers,
             "backend_log_roots": {
                 backend: str(path) for backend, path in self.backend_log_roots.items()
@@ -1081,44 +1079,63 @@ class MatrixRunner:
         self.progress.finish_configuration("skipped", backend_container)
         return "skipped"
 
-    def _configuration_groups(
-        self,
-    ) -> list[tuple[Environment, list[Configuration]]]:
-        """Keep every configuration for an environment on one worker."""
-        grouped: dict[Environment, list[Configuration]] = {}
-        for configuration in self.configurations:
-            grouped.setdefault(configuration.environment, []).append(configuration)
-        return list(grouped.items())
-
-    def _run_environment_group(
-        self, environment: Environment, configurations: list[Configuration]
-    ) -> None:
-        backend_container = self._available_backends.get()
+    def _run_configuration_worker(
+        self, backend_container: str, configurations: Queue
+    ) -> list[str]:
+        """Consume the ordered configuration queue on one isolated backend."""
+        errors = []
+        previous_environment = None
         try:
-            self.progress.write(
-                f"{backend_container}: starting environment {environment.label} "
-                f"({len(configurations)} configurations)"
-            )
-            for configuration in configurations:
-                if self._stop_event.is_set():
-                    return
-                if configuration.configuration_id in self.skip_configuration_ids:
-                    status = self._skip_configuration(configuration, backend_container)
-                else:
-                    status = self._run_configuration(configuration, backend_container)
-                with self._state_lock:
-                    self.completed_configurations += 1
-                    if status == "failure":
-                        self.failed_configurations += 1
+            while not self._stop_event.is_set():
+                try:
+                    configuration = configurations.get_nowait()
+                except Empty:
+                    break
 
+                try:
+                    environment = configuration.environment
+                    if (
+                        previous_environment is not None
+                        and environment != previous_environment
+                        and self.args.prune_dind_between_repositories
+                        and not self.args.dry_run
+                    ):
+                        self._prune_dind(
+                            previous_environment.label, backend_container
+                        )
+                    previous_environment = environment
+
+                    if configuration.configuration_id in self.skip_configuration_ids:
+                        status = self._skip_configuration(
+                            configuration, backend_container
+                        )
+                    else:
+                        status = self._run_configuration(
+                            configuration, backend_container
+                        )
+                    with self._state_lock:
+                        self.completed_configurations += 1
+                        if status == "failure":
+                            self.failed_configurations += 1
+                except KeyboardInterrupt:
+                    self._stop_event.set()
+                    raise
+                except Exception as error:
+                    errors.append(
+                        f"{configuration.configuration_id}: "
+                        f"{error.__class__.__name__}: {error}"
+                    )
+                finally:
+                    configurations.task_done()
+        finally:
             if (
-                self.args.prune_dind_between_repositories
+                previous_environment is not None
+                and self.args.prune_dind_between_repositories
                 and not self.args.dry_run
                 and not self._stop_event.is_set()
             ):
-                self._prune_dind(environment.label, backend_container)
-        finally:
-            self._available_backends.put(backend_container)
+                self._prune_dind(previous_environment.label, backend_container)
+        return errors
 
     def _terminate_active_processes(self) -> None:
         with self._state_lock:
@@ -1135,38 +1152,38 @@ class MatrixRunner:
                 process.kill()
                 process.wait()
 
-    def _run_environment_groups(self) -> list[str]:
-        groups = self._configuration_groups()
+    def _run_configurations(self) -> list[str]:
+        """Run configurations FIFO so environment tails overlap intentionally."""
+        configurations = Queue()
+        for configuration in self.configurations:
+            configurations.put(configuration)
+
         if self.args.jobs == 1 or self.args.dry_run:
-            errors = []
-            for environment, configurations in groups:
-                try:
-                    self._run_environment_group(environment, configurations)
-                except Exception as error:
-                    errors.append(
-                        f"{environment.label}: {error.__class__.__name__}: {error}"
-                    )
-            return errors
+            return self._run_configuration_worker(
+                self.backend_containers[0], configurations
+            )
 
         executor = ThreadPoolExecutor(
             max_workers=self.args.jobs,
             thread_name_prefix="teacher-matrix",
         )
         futures = {
-            executor.submit(self._run_environment_group, environment, configurations): (
-                environment
-            )
-            for environment, configurations in groups
+            executor.submit(
+                self._run_configuration_worker,
+                backend_container,
+                configurations,
+            ): backend_container
+            for backend_container in self.backend_containers
         }
         errors = []
         try:
             for future in as_completed(futures):
-                environment = futures[future]
                 try:
-                    future.result()
+                    errors.extend(future.result())
                 except Exception as error:
+                    backend_container = futures[future]
                     errors.append(
-                        f"{environment.label}: {error.__class__.__name__}: {error}"
+                        f"{backend_container}: {error.__class__.__name__}: {error}"
                     )
         except KeyboardInterrupt:
             self._stop_event.set()
@@ -1204,9 +1221,9 @@ class MatrixRunner:
         try:
             if not self.args.dry_run:
                 self._preflight()
-            environment_errors = self._run_environment_groups()
-            if environment_errors:
-                batch_error = compact_error("; ".join(environment_errors))
+            configuration_errors = self._run_configurations()
+            if configuration_errors:
+                batch_error = compact_error("; ".join(configuration_errors))
         except KeyboardInterrupt:
             interrupted = True
             self._stop_event.set()
@@ -1262,11 +1279,11 @@ def create_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         choices=range(1, len(MATRIX_BACKEND_CONTAINERS) + 1),
-        default=DEFAULT_ENVIRONMENT_WORKERS,
+        default=DEFAULT_CONFIGURATION_WORKERS,
         metavar=f"1-{len(MATRIX_BACKEND_CONTAINERS)}",
         help=(
-            "Number of isolated environment workers to run concurrently "
-            f"(default: {DEFAULT_ENVIRONMENT_WORKERS})."
+            "Number of isolated configuration workers to run concurrently "
+            f"(default: {DEFAULT_CONFIGURATION_WORKERS})."
         ),
     )
     parser.add_argument(
@@ -1275,7 +1292,7 @@ def create_parser() -> argparse.ArgumentParser:
         default=[],
         help=(
             "Explicit isolated backend container to use; repeat once per job. "
-            "The launcher uses this to give concurrent modes disjoint workers."
+            "The launcher uses this to create the shared worker pool."
         ),
     )
     parser.add_argument(

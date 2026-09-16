@@ -62,6 +62,14 @@ def test_full_launcher_shape_contains_495_configurations():
     assert len(MATRIX_BACKEND_CONTAINERS) == 30
     assert len(environments) == 9
 
+    system_only = build_configurations(
+        environments=[environments[0]],
+        prompt_files=prompts,
+        repetitions=5,
+        placements=("system",),
+    )
+    assert len(system_only) == 30
+
 
 def test_user_prompt_placement_runs_only_prepend_and_baseline():
     configurations = build_configurations(
@@ -226,9 +234,14 @@ def test_compact_status_records_successful_student_runs(tmp_path, monkeypatch):
         record for record in records if record["record_type"] == "configuration"
     ]
     students = [record for record in records if record["record_type"] == "student_run"]
+    batch_start = next(
+        record for record in records if record["record_type"] == "batch_start"
+    )
 
     assert len(configurations) == 15
     assert len(students) == 15
+    assert batch_start["worker_scope"] == "configuration"
+    assert batch_start["scheduling_order"] == "environment_ordered"
     assert {record["status"] for record in configurations} == {"success"}
     assert {record["status"] for record in students} == {"success"}
     assert students[0]["workflow_log_path"] == str(
@@ -322,11 +335,12 @@ def test_prunes_dind_once_after_each_environment(tmp_path, monkeypatch):
     args.prune_dind_between_repositories = True
     runner = MatrixRunner(args)
     monkeypatch.setattr(runner, "_preflight", lambda: None)
-    monkeypatch.setattr(
-        runner,
-        "_run_configuration",
-        lambda configuration, backend_container: "success",
-    )
+
+    def run_configuration(configuration, backend_container):
+        time.sleep(0.001)
+        return "success"
+
+    monkeypatch.setattr(runner, "_run_configuration", run_configuration)
     pruned_environments = []
     monkeypatch.setattr(
         runner,
@@ -381,28 +395,26 @@ def test_dind_prune_preserves_tagged_images(tmp_path, monkeypatch):
     assert "-a" not in commands[0]
 
 
-def test_each_parallel_worker_runs_one_complete_environment_group(
+def test_parallel_workers_consume_environment_ordered_configuration_queue(
     tmp_path, monkeypatch
 ):
     monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
     monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
     args = _args(mode="observe")
     args.jobs = 3
-    args.prompt_file = [
-        PROMPT_FILE,
-        "prompts/system_prompts/principle_extraction.txt",
-    ]
+    args.prompt_placement = "system"
+    args.prompt_file = [PROMPT_FILE]
     args.environment = [
         Environment("repo-a", "0", "detect_workflow"),
-        Environment("repo-a", "1", "patch_workflow"),
         Environment("repo-b", "0", "exploit_workflow"),
     ]
     runner = MatrixRunner(args)
     monkeypatch.setattr(runner, "_preflight", lambda: None)
 
     lock = threading.Lock()
-    active_environments = set()
-    overlap = []
+    active_environments = {}
+    start_order = []
+    tail_overlap = []
     backend_by_environment = {}
     runs_by_environment = {}
     maximum_active = [0]
@@ -410,28 +422,81 @@ def test_each_parallel_worker_runs_one_complete_environment_group(
     def run_configuration(configuration, backend_container):
         environment = configuration.environment
         with lock:
-            if environment in active_environments:
-                overlap.append(environment)
-            active_environments.add(environment)
+            start_order.append(environment)
+            active_environments[environment] = (
+                active_environments.get(environment, 0) + 1
+            )
+            if (
+                environment.repository == "repo-b"
+                and active_environments.get(args.environment[0], 0) > 0
+            ):
+                tail_overlap.append(True)
             backend_by_environment.setdefault(environment, set()).add(backend_container)
             runs_by_environment[environment] = (
                 runs_by_environment.get(environment, 0) + 1
             )
-            maximum_active[0] = max(maximum_active[0], len(active_environments))
+            maximum_active[0] = max(
+                maximum_active[0], sum(active_environments.values())
+            )
         time.sleep(0.002)
         with lock:
-            active_environments.remove(environment)
+            active_environments[environment] -= 1
         return "success"
 
     monkeypatch.setattr(runner, "_run_configuration", run_configuration)
 
     assert runner.run() == 0
-    assert overlap == []
     assert maximum_active[0] == 3
-    assert set(runs_by_environment.values()) == {25}
-    assert all(len(backends) == 1 for backends in backend_by_environment.values())
+    assert start_order == [args.environment[0]] * 10 + [args.environment[1]] * 10
+    assert tail_overlap
+    assert set(runs_by_environment.values()) == {10}
+    assert all(len(backends) > 1 for backends in backend_by_environment.values())
     assert set().union(*backend_by_environment.values()) == {
         "backend-worker-1",
         "backend-worker-2",
         "backend-worker-3",
+    }
+
+
+def test_parallel_pruning_is_scoped_to_each_worker_transition(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    args = _args(mode="observe")
+    args.jobs = 2
+    args.prompt_placement = "system"
+    args.environment = [
+        Environment("repo-a", "0", "detect_workflow"),
+        Environment("repo-b", "0", "exploit_workflow"),
+    ]
+    args.prune_dind_between_repositories = True
+    runner = MatrixRunner(args)
+    monkeypatch.setattr(runner, "_preflight", lambda: None)
+
+    def run_configuration(configuration, backend_container):
+        time.sleep(0.001)
+        return "success"
+
+    monkeypatch.setattr(runner, "_run_configuration", run_configuration)
+
+    lock = threading.Lock()
+    pruned_by_backend = {}
+
+    def record_prune(environment_label, backend_container):
+        with lock:
+            pruned_by_backend.setdefault(backend_container, []).append(
+                environment_label
+            )
+
+    monkeypatch.setattr(runner, "_prune_dind", record_prune)
+
+    assert runner.run() == 0
+    assert pruned_by_backend == {
+        "backend-worker-1": [
+            "repo-a bounty 0 · detect_workflow",
+            "repo-b bounty 0 · exploit_workflow",
+        ],
+        "backend-worker-2": [
+            "repo-a bounty 0 · detect_workflow",
+            "repo-b bounty 0 · exploit_workflow",
+        ],
     }

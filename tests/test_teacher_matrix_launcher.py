@@ -16,7 +16,7 @@ def _argument_values(arguments, option):
     ]
 
 
-def test_all_modes_get_disjoint_fully_isolated_workers(tmp_path):
+def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     docker_log = tmp_path / "docker.log"
@@ -73,7 +73,7 @@ def test_all_modes_get_disjoint_fully_isolated_workers(tmp_path):
         for command in docker_commands
         if command.startswith("run -d ")
     ]
-    assert len(worker_commands) == 27
+    assert len(worker_commands) == 30
 
     worker_names = set()
     worker_networks = set()
@@ -95,10 +95,11 @@ def test_all_modes_get_disjoint_fully_isolated_workers(tmp_path):
         artifact_roots.add(str(Path(log_mount.split(":", 1)[0]).parent))
         assert worker_name in log_mount
 
-    assert worker_names == {f"backend-worker-{number}" for number in range(1, 28)}
-    assert len(worker_networks) == 27
-    assert len(dind_volumes) == 27
-    assert len(artifact_roots) == 27
+    expected_workers = {f"backend-worker-{number}" for number in range(1, 31)}
+    assert worker_names == expected_workers
+    assert len(worker_networks) == 30
+    assert len(dind_volumes) == 30
+    assert len(artifact_roots) == 30
 
     mode_commands = [
         shlex.split(path.read_text()) for path in sorted(python_log_dir.glob("*.log"))
@@ -107,10 +108,11 @@ def test_all_modes_get_disjoint_fully_isolated_workers(tmp_path):
     workers_by_mode = {}
     for arguments in mode_commands:
         mode = _argument_values(arguments, "--teacher-mode")[0]
+        assert _argument_values(arguments, "--jobs") == ["30"]
         workers_by_mode[mode] = set(_argument_values(arguments, "--backend-container"))
 
     assert workers_by_mode == {
-        "observe": {f"backend-worker-{number}" for number in range(1, 10)},
-        "steer": {f"backend-worker-{number}" for number in range(10, 19)},
-        "objective_rewrite": {f"backend-worker-{number}" for number in range(19, 28)},
+        "observe": expected_workers,
+        "steer": expected_workers,
+        "objective_rewrite": expected_workers,
     }
