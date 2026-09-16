@@ -38,7 +38,7 @@ PRIMARY_BACKEND_CONTAINER = "backend-service"
 MATRIX_BACKEND_CONTAINERS = tuple(f"backend-worker-{number}" for number in range(1, 31))
 DEFAULT_CONFIGURATION_WORKERS = 30
 DEFAULT_REPO_SETUP_WORKERS = 5
-PHASE_ITERATIONS = 300
+DEFAULT_PHASE_ITERATIONS = 300
 REPETITIONS = 5
 MAX_INPUT_TOKENS = 1048576
 MAX_OUTPUT_TOKENS = 65536
@@ -122,7 +122,13 @@ class JsonlRecorder:
 
 class ProgressDisplay:
     def __init__(
-        self, *, matrix_name: str, total: int, enabled: bool, workers: list[str]
+        self,
+        *,
+        matrix_name: str,
+        total: int,
+        enabled: bool,
+        workers: list[str],
+        phase_iterations: int,
     ):
         self.enabled = enabled
         self._lock = threading.RLock()
@@ -137,6 +143,7 @@ class ProgressDisplay:
         self.succeeded = 0
         self.failed = 0
         self.skipped = 0
+        self.phase_iterations = phase_iterations
         self.overall = tqdm(
             total=total,
             desc=f"Overall {matrix_name}",
@@ -202,7 +209,7 @@ class ProgressDisplay:
     def start_student(self, role: str, worker: str) -> None:
         with self._lock:
             self._replace_active(
-                worker, description=f"Student {role}", total=PHASE_ITERATIONS
+                worker, description=f"Student {role}", total=self.phase_iterations
             )
 
     def finish_student(self, worker: str) -> None:
@@ -492,6 +499,7 @@ class MatrixRunner:
             total=len(self.configurations),
             enabled=not args.no_progress,
             workers=self.backend_containers,
+            phase_iterations=args.phase_iterations,
         )
         self._state_lock = threading.Lock()
         self._active_processes = {}
@@ -537,7 +545,7 @@ class MatrixRunner:
             "teacher_model": TEACHER_MODEL,
             "teacher_max_input_tokens": self.args.teacher_max_input_tokens,
             "teacher_max_output_tokens": self.args.teacher_max_output_tokens,
-            "phase_iterations": PHASE_ITERATIONS,
+            "phase_iterations": self.args.phase_iterations,
             "repetitions": REPETITIONS,
             "concurrent_jobs": self.args.jobs,
             "concurrent_repo_setups": self.args.setup_jobs,
@@ -688,7 +696,7 @@ class MatrixRunner:
             "--teacher_max_output_tokens",
             str(self.args.teacher_max_output_tokens),
             "--phase_iterations",
-            str(PHASE_ITERATIONS),
+            str(self.args.phase_iterations),
             "--max_input_tokens",
             str(MAX_INPUT_TOKENS),
             "--max_output_tokens",
@@ -1361,6 +1369,15 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "Maximum Gemini teacher response length "
             f"(default: {TEACHER_MAX_OUTPUT_TOKENS})."
+        ),
+    )
+    parser.add_argument(
+        "--phase-iterations",
+        type=positive_int,
+        default=DEFAULT_PHASE_ITERATIONS,
+        help=(
+            "Maximum student iterations in each workflow phase "
+            f"(default: {DEFAULT_PHASE_ITERATIONS})."
         ),
     )
     parser.add_argument("--prompt-file", action="append", required=True)

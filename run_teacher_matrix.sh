@@ -24,6 +24,10 @@ set -uo pipefail
 #       Maximum Gemini teacher input context. Default: 1048576, the model maximum.
 #   --teacher-max-output-tokens NUMBER
 #       Maximum Gemini teacher response length. Default: 65536, the model maximum.
+#   --phase-iterations NUMBER
+#       Maximum student iterations in each workflow phase. In observe and steer,
+#       this also bounds teacher evaluations because the teacher runs after each
+#       completed student turn. Default: 300.
 #   --skip-configurations-from STATUS_JSONL
 #       May be repeated. Skip only finalized top-level configurations recorded
 #       with status "success" in a previous run_status.jsonl. In-progress
@@ -80,6 +84,7 @@ usage() {
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
     "  --teacher-max-input-tokens NUMBER    Gemini teacher input limit; default 1048576." \
     "  --teacher-max-output-tokens NUMBER   Gemini teacher output limit; default 65536." \
+    "  --phase-iterations NUMBER            Student phase limit; default 300." \
     "  --skip-configurations-from FILE      Skip prior successful configurations." \
     "  --dry-run                           Plan and record without executing." \
     "  --prune-dind-between-repositories   Reclaim unused inner Docker storage." \
@@ -97,6 +102,7 @@ SELECTED_SETUP_JOBS=5
 SELECTED_PROMPT_PLACEMENT="both"
 SELECTED_TEACHER_MAX_INPUT_TOKENS=1048576
 SELECTED_TEACHER_MAX_OUTPUT_TOKENS=65536
+SELECTED_PHASE_ITERATIONS=300
 SKIP_CONFIGURATION_SOURCES=()
 DRY_RUN=false
 FORWARD_ARGUMENTS=()
@@ -179,6 +185,18 @@ while [[ $# -gt 0 ]]; do
       SELECTED_TEACHER_MAX_OUTPUT_TOKENS="${1#*=}"
       shift
       ;;
+    --phase-iterations)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --phase-iterations requires a positive integer.\n' >&2
+        exit 2
+      fi
+      SELECTED_PHASE_ITERATIONS="$2"
+      shift 2
+      ;;
+    --phase-iterations=*)
+      SELECTED_PHASE_ITERATIONS="${1#*=}"
+      shift
+      ;;
     --skip-configurations-from)
       if [[ $# -lt 2 || -z "$2" ]]; then
         printf 'ERROR: --skip-configurations-from requires a run_status.jsonl file.\n' >&2
@@ -229,6 +247,11 @@ fi
 
 if [[ ! "$SELECTED_TEACHER_MAX_OUTPUT_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
   printf 'ERROR: --teacher-max-output-tokens must be a positive integer.\n' >&2
+  exit 2
+fi
+
+if [[ ! "$SELECTED_PHASE_ITERATIONS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'ERROR: --phase-iterations must be a positive integer.\n' >&2
   exit 2
 fi
 
@@ -614,6 +637,7 @@ run_mode() {
     --prompt-placement "$SELECTED_PROMPT_PLACEMENT"
     --teacher-max-input-tokens "$SELECTED_TEACHER_MAX_INPUT_TOKENS"
     --teacher-max-output-tokens "$SELECTED_TEACHER_MAX_OUTPUT_TOKENS"
+    --phase-iterations "$SELECTED_PHASE_ITERATIONS"
     --launcher "$0"
   )
 

@@ -5,6 +5,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from scripts.run_teacher_prompt_matrix import (
+    DEFAULT_PHASE_ITERATIONS,
     Environment,
     MATRIX_BACKEND_CONTAINERS,
     MatrixRunner,
@@ -26,6 +27,7 @@ def _args(*, mode):
         prompt_placement="both",
         teacher_max_input_tokens=TEACHER_MAX_INPUT_TOKENS,
         teacher_max_output_tokens=TEACHER_MAX_OUTPUT_TOKENS,
+        phase_iterations=DEFAULT_PHASE_ITERATIONS,
         skip_configurations_from=[],
         prompt_file=[PROMPT_FILE],
         environment=[Environment("lunary", "0", "detect_workflow")],
@@ -60,6 +62,7 @@ def test_teacher_token_limits_default_to_gemini_maxima_and_reach_workflow(
     )
     assert parsed.teacher_max_input_tokens == 1048576
     assert parsed.teacher_max_output_tokens == 65536
+    assert parsed.phase_iterations == 300
 
     monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
     monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
@@ -74,6 +77,40 @@ def test_teacher_token_limits_default_to_gemini_maxima_and_reach_workflow(
     output_index = command.index("--teacher_max_output_tokens")
     assert command[input_index + 1] == "1048576"
     assert command[output_index + 1] == "65536"
+    phase_index = command.index("--phase_iterations")
+    assert command[phase_index + 1] == "300"
+
+
+def test_custom_phase_iterations_reach_every_student_workflow(tmp_path, monkeypatch):
+    parser = create_parser()
+    parsed = parser.parse_args(
+        [
+            "--matrix-name",
+            "iterations",
+            "--teacher-mode",
+            "observe",
+            "--phase-iterations",
+            "17",
+            "--prompt-file",
+            PROMPT_FILE,
+            "--environment",
+            "lunary|0|detect_workflow",
+            "--launcher",
+            "run_teacher_matrix.sh",
+        ]
+    )
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    runner = MatrixRunner(parsed)
+    try:
+        command = runner._command(runner.configurations[0], "backend-service")
+    finally:
+        runner.progress.close()
+        runner.recorder.close()
+
+    phase_index = command.index("--phase_iterations")
+    assert command[phase_index + 1] == "17"
+    assert runner.progress.phase_iterations == 17
 
 
 def _event(event, **fields):

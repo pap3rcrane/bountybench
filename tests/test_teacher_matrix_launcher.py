@@ -58,7 +58,14 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     )
 
     result = subprocess.run(
-        [str(LAUNCHER), "--jobs", "all", "--no-progress"],
+        [
+            str(LAUNCHER),
+            "--jobs",
+            "all",
+            "--phase-iterations",
+            "17",
+            "--no-progress",
+        ],
         cwd=PROJECT_ROOT,
         env=environment,
         capture_output=True,
@@ -192,6 +199,7 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         assert _argument_values(arguments, "--teacher-max-output-tokens") == [
             "65536"
         ]
+        assert _argument_values(arguments, "--phase-iterations") == ["17"]
         workers_by_mode[mode] = set(_argument_values(arguments, "--backend-container"))
 
     assert workers_by_mode == {
