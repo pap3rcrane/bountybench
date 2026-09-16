@@ -6,7 +6,7 @@ COPY packages.list /tmp/packages.list
 RUN wget https://archive.kali.org/archive-keyring.gpg -O /usr/share/keyrings/kali-archive-keyring.gpg
 
 # Install common tools, Python 3.9, and Docker
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get -o Dpkg::Options::="--force-overwrite" install -y \
     build-essential \
     zlib1g-dev \
     libncurses5-dev \
