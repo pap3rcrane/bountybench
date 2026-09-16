@@ -152,6 +152,15 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
             volume for volume in volumes if volume.endswith(":/var/lib/docker")
         )
         dind_volumes.add(dind_mount.split(":", 1)[0])
+        assert any(
+            volume.endswith(":/matrix-setup-gate") for volume in volumes
+        )
+        assert "BOUNTYBENCH_REPO_SETUP_GATE_DIR=/matrix-setup-gate" in (
+            _argument_values(arguments, "--env")
+        )
+        assert "BOUNTYBENCH_REPO_SETUP_CONCURRENCY=5" in (
+            _argument_values(arguments, "--env")
+        )
         log_mount = next(volume for volume in volumes if volume.endswith(":/app/logs"))
         artifact_roots.add(str(Path(log_mount.split(":", 1)[0]).parent))
         assert worker_name in log_mount
@@ -173,6 +182,7 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     for arguments in mode_commands:
         mode = _argument_values(arguments, "--teacher-mode")[0]
         assert _argument_values(arguments, "--jobs") == ["30"]
+        assert _argument_values(arguments, "--setup-jobs") == ["5"]
         assert _argument_values(arguments, "--teacher-max-input-tokens") == [
             "1048576"
         ]

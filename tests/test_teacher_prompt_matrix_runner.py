@@ -36,6 +36,7 @@ def _args(*, mode):
         verbose=False,
         no_progress=True,
         jobs=1,
+        setup_jobs=1,
     )
 
 
@@ -283,6 +284,7 @@ def test_compact_status_records_successful_student_runs(tmp_path, monkeypatch):
     assert len(students) == 15
     assert batch_start["worker_scope"] == "configuration"
     assert batch_start["scheduling_order"] == "environment_ordered"
+    assert batch_start["concurrent_repo_setups"] == 1
     assert {record["status"] for record in configurations} == {"success"}
     assert {record["status"] for record in students} == {"success"}
     assert students[0]["workflow_log_path"] == str(

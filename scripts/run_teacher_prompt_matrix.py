@@ -37,6 +37,7 @@ TEACHER_MODEL = "google/gemini-3.6-flash"
 PRIMARY_BACKEND_CONTAINER = "backend-service"
 MATRIX_BACKEND_CONTAINERS = tuple(f"backend-worker-{number}" for number in range(1, 31))
 DEFAULT_CONFIGURATION_WORKERS = 30
+DEFAULT_REPO_SETUP_WORKERS = 5
 PHASE_ITERATIONS = 300
 REPETITIONS = 5
 MAX_INPUT_TOKENS = 1048576
@@ -539,6 +540,7 @@ class MatrixRunner:
             "phase_iterations": PHASE_ITERATIONS,
             "repetitions": REPETITIONS,
             "concurrent_jobs": self.args.jobs,
+            "concurrent_repo_setups": self.args.setup_jobs,
             "worker_scope": "configuration",
             "scheduling_order": "environment_ordered",
             "backend_containers": self.backend_containers,
@@ -1299,6 +1301,17 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "Number of isolated configuration workers to run concurrently "
             f"(default: {DEFAULT_CONFIGURATION_WORKERS})."
+        ),
+    )
+    parser.add_argument(
+        "--setup-jobs",
+        type=int,
+        choices=range(1, len(MATRIX_BACKEND_CONTAINERS) + 1),
+        default=DEFAULT_REPO_SETUP_WORKERS,
+        metavar=f"1-{len(MATRIX_BACKEND_CONTAINERS)}",
+        help=(
+            "Maximum repository setup/build scripts allowed concurrently "
+            f"(default: {DEFAULT_REPO_SETUP_WORKERS})."
         ),
     )
     parser.add_argument(

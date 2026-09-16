@@ -13,6 +13,9 @@ set -uo pipefail
 #       work for the next environment. Each job uses a dedicated container, network,
 #       artifact directory, and Docker-in-Docker volume. Valid range: 1-30. "all"
 #       means 30. Default: all.
+#   --setup-jobs NUMBER
+#       Limit concurrent repository setup/build scripts while retaining all selected
+#       configuration workers. Valid range: 1-30. Default: 5.
 #   --prompt-placement user|system|both
 #       Select where custom teacher prompts are sent. "user" uses the existing
 #       prepend placement, "system" uses Gemini's API system instruction, and
@@ -73,6 +76,7 @@ usage() {
     "Options:" \
     "  --modes MODE[,MODE...]              Modes to run; default is all three." \
     "  --jobs NUMBER|all                    Global configuration workers; all means 30." \
+    "  --setup-jobs NUMBER                  Concurrent repository setups; default 5." \
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
     "  --teacher-max-input-tokens NUMBER    Gemini teacher input limit; default 1048576." \
     "  --teacher-max-output-tokens NUMBER   Gemini teacher output limit; default 65536." \
@@ -89,6 +93,7 @@ usage() {
 ORIGINAL_ARGUMENTS=("$@")
 SELECTED_MODES_CSV="observe,steer,objective_rewrite"
 SELECTED_JOBS="all"
+SELECTED_SETUP_JOBS=5
 SELECTED_PROMPT_PLACEMENT="both"
 SELECTED_TEACHER_MAX_INPUT_TOKENS=1048576
 SELECTED_TEACHER_MAX_OUTPUT_TOKENS=65536
@@ -124,6 +129,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --jobs=*)
       SELECTED_JOBS="${1#*=}"
+      shift
+      ;;
+    --setup-jobs)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --setup-jobs requires a number from 1 through 30.\n' >&2
+        exit 2
+      fi
+      SELECTED_SETUP_JOBS="$2"
+      shift 2
+      ;;
+    --setup-jobs=*)
+      SELECTED_SETUP_JOBS="${1#*=}"
       shift
       ;;
     --prompt-placement)
@@ -200,6 +217,11 @@ if [[ "$SELECTED_JOBS" != "all" && ! "$SELECTED_JOBS" =~ ^([1-9]|[12][0-9]|30)$ 
   exit 2
 fi
 
+if [[ ! "$SELECTED_SETUP_JOBS" =~ ^([1-9]|[12][0-9]|30)$ ]]; then
+  printf 'ERROR: --setup-jobs must be a number from 1 through 30.\n' >&2
+  exit 2
+fi
+
 if [[ ! "$SELECTED_TEACHER_MAX_INPUT_TOKENS" =~ ^[1-9][0-9]*$ ]]; then
   printf 'ERROR: --teacher-max-input-tokens must be a positive integer.\n' >&2
   exit 2
@@ -245,7 +267,10 @@ MATRIX_REGISTRY_CACHE_VOLUME="bountybench-matrix-registry-cache"
 MATRIX_REGISTRY_CACHE_ALIAS="matrix-registry-cache"
 MATRIX_REGISTRY_CACHE_URL="http://$MATRIX_REGISTRY_CACHE_ALIAS:5000"
 MATRIX_LAUNCH_ID="$(date +%Y%m%d-%H%M%S)-$$"
+MATRIX_SETUP_GATE_VOLUME="bb-matrix-$MATRIX_LAUNCH_ID-setup-gate"
+MATRIX_SETUP_GATE_PATH="/matrix-setup-gate"
 MATRIX_WORKER_COUNT=0
+MATRIX_SETUP_JOB_COUNT=0
 ACTIVE_WORKER_SERVICES=()
 ACTIVE_WORKER_NETWORKS=()
 ACTIVE_WORKER_VOLUMES=()
@@ -284,6 +309,7 @@ stop_workers() {
     fi
     docker network rm "${ACTIVE_WORKER_NETWORKS[@]}" >/dev/null 2>&1 || true
     docker volume rm "${ACTIVE_WORKER_VOLUMES[@]}" >/dev/null 2>&1 || true
+    docker volume rm "$MATRIX_SETUP_GATE_VOLUME" >/dev/null 2>&1 || true
     if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
       docker volume rm "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null 2>&1 || true
     fi
@@ -342,7 +368,9 @@ start_workers() {
   done < <(docker network ls --format '{{.Name}}')
   while IFS= read -r stale_resource; do
     case "$stale_resource" in
-      bb-matrix-*-dind) docker volume rm "$stale_resource" >/dev/null 2>&1 || true ;;
+      bb-matrix-*-dind|bb-matrix-*-setup-gate)
+        docker volume rm "$stale_resource" >/dev/null 2>&1 || true
+        ;;
     esac
   done < <(docker volume ls --format '{{.Name}}')
   docker volume rm "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null 2>&1 || true
@@ -367,6 +395,12 @@ start_workers() {
       exit 1
     fi
   done
+
+  if ! docker volume create "$MATRIX_SETUP_GATE_VOLUME" >/dev/null; then
+    printf 'ERROR: failed to create repository setup gate volume %s.\n' \
+      "$MATRIX_SETUP_GATE_VOLUME" >&2
+    exit 1
+  fi
 
   if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
     if ! docker image inspect "$MATRIX_REGISTRY_CACHE_IMAGE" >/dev/null 2>&1; then
@@ -432,6 +466,9 @@ start_workers() {
       --volume "$worker_root/logs:/app/logs"
       --volume "$worker_root/full_logs:/app/full_logs"
       --volume "$worker_root/generated_objectives:/app/generated_objectives"
+      --volume "$MATRIX_SETUP_GATE_VOLUME:$MATRIX_SETUP_GATE_PATH"
+      --env "BOUNTYBENCH_REPO_SETUP_GATE_DIR=$MATRIX_SETUP_GATE_PATH"
+      --env "BOUNTYBENCH_REPO_SETUP_CONCURRENCY=$MATRIX_SETUP_JOB_COUNT"
       --volume "$REPOSITORY_ROOT/prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro"
       --volume "$REPOSITORY_ROOT/prompts/system_prompts:/app/prompts/system_prompts:ro"
     )
@@ -553,6 +590,11 @@ resolve_worker_allocation() {
   else
     MATRIX_WORKER_COUNT=$SELECTED_JOBS
   fi
+  if [[ "$SELECTED_SETUP_JOBS" -lt "$MATRIX_WORKER_COUNT" ]]; then
+    MATRIX_SETUP_JOB_COUNT=$SELECTED_SETUP_JOBS
+  else
+    MATRIX_SETUP_JOB_COUNT=$MATRIX_WORKER_COUNT
+  fi
 }
 
 run_mode() {
@@ -565,6 +607,7 @@ run_mode() {
     --matrix-name "$MATRIX_NAME"
     --teacher-mode "$TEACHER_MODE"
     --jobs "$MATRIX_WORKER_COUNT"
+    --setup-jobs "$MATRIX_SETUP_JOB_COUNT"
     --prompt-placement "$SELECTED_PROMPT_PLACEMENT"
     --teacher-max-input-tokens "$SELECTED_TEACHER_MAX_INPUT_TOKENS"
     --teacher-max-output-tokens "$SELECTED_TEACHER_MAX_OUTPUT_TOKENS"
@@ -592,8 +635,8 @@ run_mode() {
   for argument in "${ORIGINAL_ARGUMENTS[@]+"${ORIGINAL_ARGUMENTS[@]}"}"; do
     command+=("--launcher-argument=$argument")
   done
-  printf 'Running teacher matrix mode: %s with %s configuration workers\n' \
-    "$mode" "$MATRIX_WORKER_COUNT"
+  printf 'Running teacher matrix mode: %s with %s configuration workers and %s setup slots\n' \
+    "$mode" "$MATRIX_WORKER_COUNT" "$MATRIX_SETUP_JOB_COUNT"
   "${command[@]}" "${FORWARD_ARGUMENTS[@]+"${FORWARD_ARGUMENTS[@]}"}"
 }
 
