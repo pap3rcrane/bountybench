@@ -253,6 +253,7 @@ stop_workers() {
 
 start_workers() {
   local job worker_name network_name volume_name worker_root host_cpu_count
+  local network_index stale_resource
 
   mkdir -p "$WORKER_ARTIFACT_ROOT"
   for ((job = 1; job <= MATRIX_WORKER_COUNT; job++)); do
@@ -292,6 +293,16 @@ start_workers() {
   # interrupted prior launch, never containers owned by another active matrix.
   docker rm -f "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null 2>&1 || true
   docker rm -f "$MATRIX_REGISTRY_CACHE_CONTAINER" >/dev/null 2>&1 || true
+  while IFS= read -r stale_resource; do
+    case "$stale_resource" in
+      bb-matrix-*) docker network rm "$stale_resource" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(docker network ls --format '{{.Name}}')
+  while IFS= read -r stale_resource; do
+    case "$stale_resource" in
+      bb-matrix-*-dind) docker volume rm "$stale_resource" >/dev/null 2>&1 || true ;;
+    esac
+  done < <(docker volume ls --format '{{.Name}}')
   docker volume rm "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null 2>&1 || true
 
   printf 'Starting %s fully isolated matrix workers...\n' "$MATRIX_WORKER_COUNT"
@@ -302,8 +313,17 @@ start_workers() {
     ACTIVE_WORKER_NETWORKS+=("$network_name")
     ACTIVE_WORKER_VOLUMES+=("$volume_name")
 
-    docker network create "$network_name" >/dev/null
-    docker volume create "$volume_name" >/dev/null
+    if ! docker network create \
+      --subnet 0.0.0.0/24 \
+      "$network_name" >/dev/null; then
+      printf 'ERROR: failed to create isolated network %s.\n' \
+        "$network_name" >&2
+      exit 1
+    fi
+    if ! docker volume create "$volume_name" >/dev/null; then
+      printf 'ERROR: failed to create DinD volume %s.\n' "$volume_name" >&2
+      exit 1
+    fi
   done
 
   if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
@@ -317,11 +337,15 @@ start_workers() {
       fi
     fi
 
-    docker volume create "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null
+    if ! docker volume create "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null; then
+      printf 'ERROR: failed to create the shared registry cache volume.\n' >&2
+      exit 1
+    fi
     local cache_command=(
       docker run -d
       --name "$MATRIX_REGISTRY_CACHE_CONTAINER"
-      --network none
+      --network "${ACTIVE_WORKER_NETWORKS[0]}"
+      --network-alias "$MATRIX_REGISTRY_CACHE_ALIAS"
       --volume "$MATRIX_REGISTRY_CACHE_VOLUME:/var/lib/registry"
       --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
     )
@@ -337,7 +361,8 @@ start_workers() {
       exit 1
     fi
 
-    for network_name in "${ACTIVE_WORKER_NETWORKS[@]}"; do
+    for ((network_index = 1; network_index < ${#ACTIVE_WORKER_NETWORKS[@]}; network_index++)); do
+      network_name="${ACTIVE_WORKER_NETWORKS[$network_index]}"
       if ! docker network connect \
         --alias "$MATRIX_REGISTRY_CACHE_ALIAS" \
         "$network_name" \

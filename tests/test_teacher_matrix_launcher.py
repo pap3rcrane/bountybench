@@ -89,7 +89,11 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     assert len(cache_commands) == 1
 
     cache_arguments = cache_commands[0]
-    assert _argument_values(cache_arguments, "--network") == ["none"]
+    cache_network = _argument_values(cache_arguments, "--network")[0]
+    assert cache_network != "none"
+    assert _argument_values(cache_arguments, "--network-alias") == [
+        "matrix-registry-cache"
+    ]
     assert _argument_values(cache_arguments, "--env") == [
         "REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io"
     ]
@@ -103,7 +107,7 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         for command in docker_commands
         if command.startswith("network connect ")
     ]
-    assert len(cache_network_commands) == 30
+    assert len(cache_network_commands) == 29
     assert {
         _argument_values(arguments, "--alias")[0]
         for arguments in cache_network_commands
@@ -111,6 +115,23 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     assert {
         arguments[-1] for arguments in cache_network_commands
     } == {"bountybench-matrix-registry-cache"}
+    connected_cache_networks = {
+        arguments[-2] for arguments in cache_network_commands
+    }
+
+    network_create_commands = [
+        shlex.split(command)
+        for command in docker_commands
+        if command.startswith("network create ")
+    ]
+    assert len(network_create_commands) == 30
+    assert {
+        tuple(_argument_values(arguments, "--subnet"))
+        for arguments in network_create_commands
+    } == {("0.0.0.0/24",)}
+    created_worker_networks = {
+        arguments[-1] for arguments in network_create_commands
+    }
 
     worker_names = set()
     worker_networks = set()
@@ -138,6 +159,9 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
     expected_workers = {f"backend-worker-{number}" for number in range(1, 31)}
     assert worker_names == expected_workers
     assert len(worker_networks) == 30
+    assert created_worker_networks == worker_networks
+    assert cache_network in worker_networks
+    assert connected_cache_networks == worker_networks - {cache_network}
     assert len(dind_volumes) == 30
     assert len(artifact_roots) == 30
 
@@ -166,3 +190,52 @@ def test_worker_entrypoint_uses_optional_mirror_without_architecture_specific_he
     assert "docker login --username" in entrypoint
     assert "docker-credential-pass" not in entrypoint
     assert "linux-arm64" not in entrypoint
+
+
+def test_launcher_stops_immediately_when_a_worker_network_cannot_be_created(tmp_path):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" >> "$FAKE_DOCKER_LOG"\n'
+        'if [[ "$*" == network\\ create*worker-2 ]]; then exit 1; fi\n'
+        "exit 0\n"
+    )
+    fake_docker.chmod(0o755)
+
+    lock_directory = tmp_path / "worker.lock"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PATH": f"{fake_bin}:{environment['PATH']}",
+            "FAKE_DOCKER_LOG": str(docker_log),
+            "BATCH_LOG_ROOT": str(tmp_path / "batch_logs"),
+            "RUNS_ROOT": str(tmp_path / "runs"),
+            "MATRIX_WORKER_LOCK_DIRECTORY": str(lock_directory),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(LAUNCHER),
+            "--modes",
+            "observe",
+            "--jobs",
+            "2",
+            "--no-progress",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 1
+    assert "failed to create isolated network" in result.stderr
+    assert not lock_directory.exists()
+    docker_commands = docker_log.read_text().splitlines()
+    assert not any(command.startswith("run -d ") for command in docker_commands)
