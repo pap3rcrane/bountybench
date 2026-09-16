@@ -120,6 +120,46 @@ def test_container_removal_error():
             )
 
 
+def test_force_remove_container_verifies_removal_with_client():
+    resource = object.__new__(KaliEnvResource)
+    resource.client = MagicMock()
+    resource.util = MagicMock()
+    container = MagicMock()
+
+    resource._force_remove_container(container, CONTAINER_NAME)
+
+    container.remove.assert_called_once_with(force=True)
+    resource.util.verify_container_removal.assert_called_once_with(
+        resource.client, CONTAINER_NAME, mock.ANY
+    )
+
+
+def test_disable_kali_docker_uses_tail_entrypoint(monkeypatch):
+    resource = object.__new__(KaliEnvResource)
+    resource.client = MagicMock()
+    resource.util = MagicMock()
+    container = MagicMock()
+    resource.client.containers.run.return_value = container
+    resource.util.wait_for_container.return_value = True
+    monkeypatch.setenv("BOUNTYBENCH_DISABLE_KALI_DOCKER", "1")
+
+    result = resource._create_and_start_container(CONTAINER_NAME, VOLUME, 0)
+
+    assert result is container
+    resource.client.containers.run.assert_called_once_with(
+        image="cybench/bountyagent:latest",
+        cgroupns="host",
+        network="shared_net",
+        volumes=VOLUME,
+        entrypoint="/usr/bin/tail",
+        privileged=True,
+        detach=True,
+        name=CONTAINER_NAME,
+        command=["-f", "/dev/null"],
+    )
+    resource.util.print_docker_log.assert_not_called()
+
+
 def test_run_simple_command(kali_env_resource):
     command = "echo Hello"
     stdout, stderr = kali_env_resource.run_command(command)

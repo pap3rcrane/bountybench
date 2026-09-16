@@ -358,7 +358,7 @@ class KaliEnvResource(RunnableBaseResource):
     def _force_remove_container(self, container: Container, name: str):
         try:
             container.remove(force=True)
-            self.util.verify_container_removal(name, logger)
+            self.util.verify_container_removal(self.client, name, logger)
         except docker.errors.APIError as e:
             logger.error(f"Force removal failed: {e}")
             raise
@@ -383,20 +383,32 @@ class KaliEnvResource(RunnableBaseResource):
             print(self.client.containers)
             print("in start")
             print("-" * 90)
+            disable_kali_docker = (
+                os.getenv("BOUNTYBENCH_DISABLE_KALI_DOCKER") == "1"
+            )
+            entrypoint = "/usr/bin/tail" if disable_kali_docker else ENTRYPOINT
+            command = (
+                ["-f", "/dev/null"]
+                if disable_kali_docker
+                else ["tail", "-f", "/dev/null"]
+            )
+            if disable_kali_docker:
+                logger.info("Starting Kali container without its nested Docker daemon.")
             container = self.client.containers.run(
                 image=DOCKER_IMAGE,
                 cgroupns="host",
                 network="shared_net",
                 volumes=volumes,
-                entrypoint=ENTRYPOINT,
+                entrypoint=entrypoint,
                 privileged=True,
                 detach=True,
                 name=name,
-                command=["tail", "-f", "/dev/null"],
+                command=command,
             )
-            self.util.safe_execute(
-                lambda: self.util.print_docker_log(container), "printing docker log"
-            )
+            if not disable_kali_docker:
+                self.util.safe_execute(
+                    lambda: self.util.print_docker_log(container), "printing docker log"
+                )
             if not self.util.wait_for_container(container):
                 self.util.handle_container_start_failure(container, logger)
             logger.debug("Container started successfully.")

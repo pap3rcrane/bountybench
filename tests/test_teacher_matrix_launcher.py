@@ -161,6 +161,9 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         assert "BOUNTYBENCH_REPO_SETUP_CONCURRENCY=5" in (
             _argument_values(arguments, "--env")
         )
+        assert "BOUNTYBENCH_DISABLE_KALI_DOCKER=1" in (
+            _argument_values(arguments, "--env")
+        )
         log_mount = next(volume for volume in volumes if volume.endswith(":/app/logs"))
         artifact_roots.add(str(Path(log_mount.split(":", 1)[0]).parent))
         assert worker_name in log_mount

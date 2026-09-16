@@ -478,6 +478,9 @@ start_workers() {
     if [[ -f "$REPOSITORY_ROOT/.env" ]]; then
       docker_command+=(--env-file "$REPOSITORY_ROOT/.env")
     fi
+    docker_command+=(
+      --env "BOUNTYBENCH_DISABLE_KALI_DOCKER=${BOUNTYBENCH_DISABLE_KALI_DOCKER:-1}"
+    )
     local environment_variable
     for environment_variable in \
       HELM_API_KEY \
