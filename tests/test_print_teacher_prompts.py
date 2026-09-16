@@ -102,6 +102,54 @@ def test_prints_objective_rewrite_payload_with_three_source_runs():
     assert "attempting to patch" in system_instruction
 
 
+def test_prints_none_baseline_for_selected_prompt_mode():
+    output = _run_script(
+        "--workflow",
+        "detect_workflow",
+        "--prompt",
+        "optimizer",
+        "--placement",
+        "none",
+        "--format",
+        "json",
+    )
+
+    assert output["request_count"] == 1
+    request = output["requests"][0]
+    contents = request["gemini_api"]["generate_content"]["contents"]
+    assert request["teacher_mode"] == "observe"
+    assert request["system_prompt_name"] is None
+    assert request["teacher_system_prompt_placement"] == "none"
+    assert request["gemini_api"]["GenerativeModel"]["system_instruction"] is None
+    assert "ORIGINAL BENCHMARK TASK:" in contents
+    assert "AVAILABLE TRACE (oldest to newest):" in contents
+    assert "As a student works through a task" not in contents
+
+
+def test_prints_objective_rewrite_none_baseline_with_response_format():
+    output = _run_script(
+        "--workflow",
+        "patch_workflow",
+        "--prompt",
+        "oversight_task",
+        "--placement",
+        "none",
+        "--format",
+        "json",
+    )
+
+    request = output["requests"][0]
+    contents = request["gemini_api"]["generate_content"]["contents"]
+    assert request["teacher_mode"] == "objective_rewrite"
+    assert request["system_prompt_name"] is None
+    assert request["gemini_api"]["GenerativeModel"]["system_instruction"] == (
+        PROJECT_ROOT
+        / "prompts/system_prompts/objective_rewrite_response_format.txt"
+    ).read_text().strip()
+    assert contents.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert contents.count("AVAILABLE TRACE (oldest to newest):") == 3
+
+
 def test_default_matrix_contains_every_workflow_prompt_placement_pair(tmp_path):
     output_path = tmp_path / "teacher-prompts.json"
     result = subprocess.run(
@@ -120,5 +168,5 @@ def test_default_matrix_contains_every_workflow_prompt_placement_pair(tmp_path):
     )
 
     output = json.loads(output_path.read_text())
-    assert output["request_count"] == 3 * 15 * 2
-    assert "Wrote 90 complete Gemini prompt payloads" in result.stdout
+    assert output["request_count"] == 3 * ((15 * 2) + 3)
+    assert "Wrote 99 complete Gemini prompt payloads" in result.stdout

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from scripts.run_teacher_prompt_matrix import (
     Environment,
+    MATRIX_BACKEND_CONTAINERS,
     MatrixRunner,
     build_configurations,
     load_successful_configuration_keys,
@@ -58,6 +59,8 @@ def test_full_launcher_shape_contains_495_configurations():
     assert len(configurations) == 495
     assert len({item.configuration_id for item in configurations}) == 495
     assert sum(item.placement == "none" for item in configurations) == 45
+    assert len(MATRIX_BACKEND_CONTAINERS) == 30
+    assert len(environments) == 9
 
 
 def test_user_prompt_placement_runs_only_prepend_and_baseline():
@@ -122,9 +125,7 @@ def test_skip_source_uses_only_final_successful_configurations(tmp_path):
     }
 
 
-def test_skip_matching_does_not_depend_on_configuration_sequence(
-    tmp_path, monkeypatch
-):
+def test_skip_matching_does_not_depend_on_configuration_sequence(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
     monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
     status_path = tmp_path / "previous.jsonl"
@@ -153,6 +154,34 @@ def test_skip_matching_does_not_depend_on_configuration_sequence(
         assert runner.skip_configuration_ids == {
             "0001_lunary_bounty_0_detect_workflow_optimizer_system_repeat_1"
         }
+    finally:
+        runner.progress.close()
+        runner.recorder.close()
+
+
+def test_explicit_worker_set_uses_isolated_artifact_roots(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    args = _args(mode="observe")
+    args.jobs = 2
+    args.backend_container = ["backend-worker-10", "backend-worker-11"]
+    args.backend_log_root = [
+        ("backend-worker-10", tmp_path / "worker-10"),
+        ("backend-worker-11", tmp_path / "worker-11"),
+    ]
+
+    runner = MatrixRunner(args)
+    try:
+        assert runner.backend_containers == [
+            "backend-worker-10",
+            "backend-worker-11",
+        ]
+        assert runner._host_log_path("/app/logs/test.json", "backend-worker-10") == str(
+            tmp_path / "worker-10/logs/test.json"
+        )
+        assert runner._host_log_path("full_logs/test.json", "backend-worker-11") == str(
+            tmp_path / "worker-11/full_logs/test.json"
+        )
     finally:
         runner.progress.close()
         runner.recorder.close()
@@ -281,7 +310,7 @@ def test_objective_failure_records_later_students_as_skipped(tmp_path, monkeypat
     assert students[2]["error"] == "RuntimeError: source failed"
 
 
-def test_prunes_dind_once_after_each_repository(tmp_path, monkeypatch):
+def test_prunes_dind_once_after_each_environment(tmp_path, monkeypatch):
     monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
     monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
     args = _args(mode="observe")
@@ -298,19 +327,20 @@ def test_prunes_dind_once_after_each_repository(tmp_path, monkeypatch):
         "_run_configuration",
         lambda configuration, backend_container: "success",
     )
-    pruned_repositories = []
+    pruned_environments = []
     monkeypatch.setattr(
         runner,
         "_prune_dind",
-        lambda repository, backend_container: pruned_repositories.append(
-            (repository, backend_container)
+        lambda environment_label, backend_container: pruned_environments.append(
+            (environment_label, backend_container)
         ),
     )
 
     assert runner.run() == 0
-    assert pruned_repositories == [
-        ("repo-a", "backend-service"),
-        ("repo-b", "backend-service"),
+    assert pruned_environments == [
+        ("repo-a bounty 0 · detect_workflow", "backend-service"),
+        ("repo-a bounty 1 · patch_workflow", "backend-service"),
+        ("repo-b bounty 0 · exploit_workflow", "backend-service"),
     ]
 
 
@@ -351,11 +381,17 @@ def test_dind_prune_preserves_tagged_images(tmp_path, monkeypatch):
     assert "-a" not in commands[0]
 
 
-def test_parallel_jobs_never_overlap_the_same_repository(tmp_path, monkeypatch):
+def test_each_parallel_worker_runs_one_complete_environment_group(
+    tmp_path, monkeypatch
+):
     monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
     monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
     args = _args(mode="observe")
-    args.jobs = 2
+    args.jobs = 3
+    args.prompt_file = [
+        PROMPT_FILE,
+        "prompts/system_prompts/principle_extraction.txt",
+    ]
     args.environment = [
         Environment("repo-a", "0", "detect_workflow"),
         Environment("repo-a", "1", "patch_workflow"),
@@ -365,31 +401,37 @@ def test_parallel_jobs_never_overlap_the_same_repository(tmp_path, monkeypatch):
     monkeypatch.setattr(runner, "_preflight", lambda: None)
 
     lock = threading.Lock()
-    active_repositories = set()
+    active_environments = set()
     overlap = []
-    backend_by_repository = {}
+    backend_by_environment = {}
+    runs_by_environment = {}
     maximum_active = [0]
 
     def run_configuration(configuration, backend_container):
-        repository = configuration.environment.repository
+        environment = configuration.environment
         with lock:
-            if repository in active_repositories:
-                overlap.append(repository)
-            active_repositories.add(repository)
-            backend_by_repository.setdefault(repository, set()).add(backend_container)
-            maximum_active[0] = max(maximum_active[0], len(active_repositories))
+            if environment in active_environments:
+                overlap.append(environment)
+            active_environments.add(environment)
+            backend_by_environment.setdefault(environment, set()).add(backend_container)
+            runs_by_environment[environment] = (
+                runs_by_environment.get(environment, 0) + 1
+            )
+            maximum_active[0] = max(maximum_active[0], len(active_environments))
         time.sleep(0.002)
         with lock:
-            active_repositories.remove(repository)
+            active_environments.remove(environment)
         return "success"
 
     monkeypatch.setattr(runner, "_run_configuration", run_configuration)
 
     assert runner.run() == 0
     assert overlap == []
-    assert maximum_active[0] == 2
-    assert all(len(backends) == 1 for backends in backend_by_repository.values())
-    assert set().union(*backend_by_repository.values()) == {
+    assert maximum_active[0] == 3
+    assert set(runs_by_environment.values()) == {25}
+    assert all(len(backends) == 1 for backends in backend_by_environment.values())
+    assert set().union(*backend_by_environment.values()) == {
         "backend-worker-1",
         "backend-worker-2",
+        "backend-worker-3",
     }

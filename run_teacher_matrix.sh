@@ -5,12 +5,13 @@ set -uo pipefail
 # Public flags:
 #   --modes MODE[,MODE...]
 #       Select one or more teacher modes. Valid modes are observe, steer, and
-#       objective_rewrite. Modes run sequentially in the order supplied.
+#       objective_rewrite. Selected modes run concurrently on disjoint workers.
 #       Default: observe,steer,objective_rewrite.
-#   --jobs NUMBER
-#       Run up to NUMBER repositories concurrently. Each job uses a dedicated
-#       backend container, repository filesystem, and Docker-in-Docker volume.
-#       Valid range: 1-5. Default: 5.
+#   --jobs NUMBER|all
+#       Run up to NUMBER environments concurrently per selected mode. Each job owns
+#       one complete (repository, bounty, workflow) configuration sequence and uses
+#       a dedicated container, network, artifact directory, and Docker-in-Docker
+#       volume. Valid range: 1-30. Default: every environment (9 per mode, 27 total).
 #   --prompt-placement user|system|both
 #       Select where custom teacher prompts are sent. "user" uses the existing
 #       prepend placement, "system" uses Gemini's API system instruction, and
@@ -29,7 +30,7 @@ set -uo pipefail
 #       Print and record every planned configuration without starting Docker
 #       environments or calling either model.
 #   --prune-dind-between-repositories
-#       After each repository, remove unused containers, networks, volumes,
+#       After each environment, remove unused containers, networks, volumes,
 #       dangling images, and build cache from Docker-in-Docker. Tagged images
 #       such as cybench/bountyagent:latest are preserved.
 #   --verbose
@@ -44,6 +45,10 @@ set -uo pipefail
 #   PYTHON_EXECUTABLE  Python interpreter used to launch the matrix runner.
 #   RUNS_ROOT         Directory for compact run_status.jsonl files.
 #   BATCH_LOG_ROOT    Directory for detailed per-configuration console logs.
+#   MATRIX_WORKER_CPU_LIMIT
+#                       Optional CPU quota per worker, for example 2. Omitted by default.
+#   MATRIX_WORKER_LOCK_DIRECTORY
+#                       Override the single-launcher lock path (primarily for tests).
 
 REPOSITORY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$REPOSITORY_ROOT"
@@ -54,7 +59,7 @@ usage() {
     "" \
     "Options:" \
     "  --modes MODE[,MODE...]              Modes to run; default is all three." \
-    "  --jobs NUMBER                        Concurrent isolated jobs; default 5." \
+    "  --jobs NUMBER|all                    Workers per mode; default all (9)." \
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
     "  --skip-configurations-from FILE      Skip prior successful configurations." \
     "  --dry-run                           Plan and record without executing." \
@@ -68,7 +73,7 @@ usage() {
 
 ORIGINAL_ARGUMENTS=("$@")
 SELECTED_MODES_CSV="observe,steer,objective_rewrite"
-SELECTED_JOBS=5
+SELECTED_JOBS="all"
 SELECTED_PROMPT_PLACEMENT="both"
 SKIP_CONFIGURATION_SOURCES=()
 DRY_RUN=false
@@ -94,7 +99,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --jobs)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        printf 'ERROR: --jobs requires a number from 1 through 5.\n' >&2
+        printf 'ERROR: --jobs requires all or a number from 1 through 30.\n' >&2
         exit 2
       fi
       SELECTED_JOBS="$2"
@@ -149,8 +154,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! "$SELECTED_JOBS" =~ ^[1-5]$ ]]; then
-  printf 'ERROR: --jobs must be a number from 1 through 5.\n' >&2
+if [[ "$SELECTED_JOBS" != "all" && ! "$SELECTED_JOBS" =~ ^([1-9]|[12][0-9]|30)$ ]]; then
+  printf 'ERROR: --jobs must be all or a number from 1 through 30.\n' >&2
   exit 2
 fi
 
@@ -180,22 +185,45 @@ for index in "${!SELECTED_MODES[@]}"; do
   esac
 done
 
+MAX_MATRIX_WORKERS=30
+MATRIX_WORKER_CPU_LIMIT="${MATRIX_WORKER_CPU_LIMIT:-}"
+MATRIX_LAUNCH_ID="$(date +%Y%m%d-%H%M%S)-$$"
+MATRIX_WORKER_COUNT=0
 ACTIVE_WORKER_SERVICES=()
-ALL_WORKER_SERVICES=(
-  backend-worker-1
-  backend-worker-2
-  backend-worker-3
-  backend-worker-4
-  backend-worker-5
-)
+ACTIVE_WORKER_NETWORKS=()
+ACTIVE_WORKER_VOLUMES=()
+MODE_WORKER_COUNTS=()
+MODE_RUNNER_PIDS=()
+MODE_RUNNER_LOGS=()
 WORKERS_STARTED=false
-WORKER_LOCK_DIRECTORY="/tmp/bountybench-teacher-matrix-workers.lock"
+WORKER_LOCK_DIRECTORY="${MATRIX_WORKER_LOCK_DIRECTORY:-/tmp/bountybench-teacher-matrix-workers.lock}"
 WORKER_LOCK_ACQUIRED=false
+
+if [[ "${BATCH_LOG_ROOT:-$REPOSITORY_ROOT/batch_logs}" = /* ]]; then
+  MATRIX_BATCH_LOG_ROOT="${BATCH_LOG_ROOT:-$REPOSITORY_ROOT/batch_logs}"
+else
+  MATRIX_BATCH_LOG_ROOT="$REPOSITORY_ROOT/${BATCH_LOG_ROOT}"
+fi
+WORKER_ARTIFACT_ROOT="$MATRIX_BATCH_LOG_ROOT/matrix_workers/$MATRIX_LAUNCH_ID"
+
+stop_mode_runners() {
+  local pid
+  for pid in "${MODE_RUNNER_PIDS[@]+"${MODE_RUNNER_PIDS[@]}"}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  for pid in "${MODE_RUNNER_PIDS[@]+"${MODE_RUNNER_PIDS[@]}"}"; do
+    wait "$pid" 2>/dev/null || true
+  done
+}
 
 stop_workers() {
   if [[ "$WORKERS_STARTED" == true ]]; then
-    printf 'Stopping isolated matrix workers...\n'
-    docker compose --profile matrix-workers stop "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null
+    printf 'Removing isolated matrix workers and their DinD volumes...\n'
+    docker rm -f "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null 2>&1 || true
+    docker network rm "${ACTIVE_WORKER_NETWORKS[@]}" >/dev/null 2>&1 || true
+    docker volume rm "${ACTIVE_WORKER_VOLUMES[@]}" >/dev/null 2>&1 || true
   fi
   if [[ "$WORKER_LOCK_ACQUIRED" == true ]]; then
     rmdir "$WORKER_LOCK_DIRECTORY" 2>/dev/null || true
@@ -203,8 +231,25 @@ stop_workers() {
 }
 
 start_workers() {
-  if [[ "$SELECTED_JOBS" -eq 1 || "$DRY_RUN" == true ]]; then
+  local job worker_name network_name volume_name worker_root host_cpu_count
+
+  mkdir -p "$WORKER_ARTIFACT_ROOT"
+  for ((job = 1; job <= MATRIX_WORKER_COUNT; job++)); do
+    worker_name="backend-worker-$job"
+    ACTIVE_WORKER_SERVICES+=("$worker_name")
+    worker_root="$WORKER_ARTIFACT_ROOT/$worker_name"
+    mkdir -p "$worker_root/logs" "$worker_root/full_logs" \
+      "$worker_root/generated_objectives"
+  done
+
+  if [[ "$DRY_RUN" == true ]]; then
     return
+  fi
+
+  host_cpu_count=$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)
+  if [[ "$host_cpu_count" =~ ^[0-9]+$ && "$MATRIX_WORKER_COUNT" -gt "$host_cpu_count" ]]; then
+    printf 'WARNING: %s workers exceed the %s detected CPU cores; setup phases may contend.\n' \
+      "$MATRIX_WORKER_COUNT" "$host_cpu_count" >&2
   fi
 
   if ! mkdir "$WORKER_LOCK_DIRECTORY" 2>/dev/null; then
@@ -222,20 +267,62 @@ start_workers() {
     exit 1
   fi
 
-  local job
-  for ((job = 1; job <= SELECTED_JOBS; job++)); do
-    ACTIVE_WORKER_SERVICES+=("backend-worker-$job")
-  done
+  # The global launcher lock guarantees these can only be stale workers from an
+  # interrupted prior launch, never containers owned by another active matrix.
+  docker rm -f "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null 2>&1 || true
 
-  printf 'Starting %s isolated matrix workers...\n' "$SELECTED_JOBS"
-  docker compose --profile matrix-workers stop "${ALL_WORKER_SERVICES[@]}" \
-    >/dev/null 2>&1 || true
+  printf 'Starting %s fully isolated matrix workers...\n' "$MATRIX_WORKER_COUNT"
   WORKERS_STARTED=true
-  if ! docker compose --profile matrix-workers up -d --no-build --force-recreate \
-    "${ACTIVE_WORKER_SERVICES[@]}"; then
-    printf 'ERROR: failed to start the isolated matrix workers.\n' >&2
-    exit 1
-  fi
+  for ((job = 1; job <= MATRIX_WORKER_COUNT; job++)); do
+    worker_name="backend-worker-$job"
+    network_name="bb-matrix-$MATRIX_LAUNCH_ID-worker-$job"
+    volume_name="bb-matrix-$MATRIX_LAUNCH_ID-worker-$job-dind"
+    worker_root="$WORKER_ARTIFACT_ROOT/$worker_name"
+    ACTIVE_WORKER_NETWORKS+=("$network_name")
+    ACTIVE_WORKER_VOLUMES+=("$volume_name")
+
+    docker network create "$network_name" >/dev/null
+    docker volume create "$volume_name" >/dev/null
+
+    local docker_command=(
+      docker run -d
+      --name "$worker_name"
+      --hostname "$worker_name"
+      --privileged
+      --network "$network_name"
+      --volume "$volume_name:/var/lib/docker"
+      --volume "$worker_root/logs:/app/logs"
+      --volume "$worker_root/full_logs:/app/full_logs"
+      --volume "$worker_root/generated_objectives:/app/generated_objectives"
+      --volume "$REPOSITORY_ROOT/prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro"
+      --volume "$REPOSITORY_ROOT/prompts/system_prompts:/app/prompts/system_prompts:ro"
+    )
+    if [[ -f "$REPOSITORY_ROOT/.env" ]]; then
+      docker_command+=(--env-file "$REPOSITORY_ROOT/.env")
+    fi
+    local environment_variable
+    for environment_variable in \
+      HELM_API_KEY \
+      OPENAI_API_KEY \
+      OPENROUTER_API_KEY \
+      AZURE_OPENAI_API_KEY \
+      AZURE_OPENAI_ENDPOINT \
+      ANTHROPIC_API_KEY \
+      GOOGLE_API_KEY \
+      TOGETHER_API_KEY; do
+      if [[ -n "${!environment_variable:-}" ]]; then
+        docker_command+=(--env "$environment_variable")
+      fi
+    done
+    if [[ -n "$MATRIX_WORKER_CPU_LIMIT" ]]; then
+      docker_command+=(--cpus "$MATRIX_WORKER_CPU_LIMIT")
+    fi
+    docker_command+=(bountybench-backend tail -f /dev/null)
+    if ! "${docker_command[@]}" >/dev/null; then
+      printf 'ERROR: failed to start isolated worker %s.\n' "$worker_name" >&2
+      exit 1
+    fi
+  done
 }
 
 if [[ -n "${PYTHON_EXECUTABLE:-}" ]]; then
@@ -317,8 +404,34 @@ configure_mode() {
   esac
 }
 
+resolve_worker_allocation() {
+  local mode environment_count mode_worker_count
+  MATRIX_WORKER_COUNT=0
+  MODE_WORKER_COUNTS=()
+  for mode in "${SELECTED_MODES[@]}"; do
+    configure_mode "$mode"
+    environment_count=${#ENVIRONMENTS[@]}
+    if [[ "$SELECTED_JOBS" == "all" || "$SELECTED_JOBS" -gt "$environment_count" ]]; then
+      mode_worker_count=$environment_count
+    else
+      mode_worker_count=$SELECTED_JOBS
+    fi
+    MODE_WORKER_COUNTS+=("$mode_worker_count")
+    MATRIX_WORKER_COUNT=$((MATRIX_WORKER_COUNT + mode_worker_count))
+  done
+
+  if ((MATRIX_WORKER_COUNT < 1 || MATRIX_WORKER_COUNT > MAX_MATRIX_WORKERS)); then
+    printf 'ERROR: selected modes require %s isolated workers; maximum is %s.\n' \
+      "$MATRIX_WORKER_COUNT" "$MAX_MATRIX_WORKERS" >&2
+    exit 2
+  fi
+}
+
 run_mode() {
   local mode="$1"
+  local worker_start="$2"
+  local worker_count="$3"
+  local concurrent_modes="$4"
   configure_mode "$mode"
 
   local command=(
@@ -326,42 +439,93 @@ run_mode() {
     "$REPOSITORY_ROOT/scripts/run_teacher_prompt_matrix.py"
     --matrix-name "$MATRIX_NAME"
     --teacher-mode "$TEACHER_MODE"
-    --jobs "$SELECTED_JOBS"
+    --jobs "$worker_count"
     --prompt-placement "$SELECTED_PROMPT_PLACEMENT"
     --launcher "$0"
   )
 
-  local prompt_file environment argument skip_source
+  local prompt_file environment argument skip_source worker_number worker_name
+  for ((
+    worker_number = worker_start;
+    worker_number < worker_start + worker_count;
+    worker_number++
+  )); do
+    worker_name="backend-worker-$worker_number"
+    command+=(--backend-container "$worker_name")
+    command+=(
+      --backend-log-root
+      "$worker_name=$WORKER_ARTIFACT_ROOT/$worker_name"
+    )
+  done
   for prompt_file in "${PROMPT_FILES[@]}"; do
     command+=(--prompt-file "$prompt_file")
   done
   for environment in "${ENVIRONMENTS[@]}"; do
     command+=(--environment "$environment")
   done
-  for skip_source in "${SKIP_CONFIGURATION_SOURCES[@]}"; do
+  for skip_source in "${SKIP_CONFIGURATION_SOURCES[@]+"${SKIP_CONFIGURATION_SOURCES[@]}"}"; do
     command+=(--skip-configurations-from "$skip_source")
   done
-  for argument in "${ORIGINAL_ARGUMENTS[@]}"; do
+  for argument in "${ORIGINAL_ARGUMENTS[@]+"${ORIGINAL_ARGUMENTS[@]}"}"; do
     command+=("--launcher-argument=$argument")
   done
+  if [[ "$concurrent_modes" == true ]]; then
+    command+=(--no-progress)
+  fi
 
   printf 'Running teacher matrix mode: %s\n' "$mode"
-  "${command[@]}" "${FORWARD_ARGUMENTS[@]}"
+  "${command[@]}" "${FORWARD_ARGUMENTS[@]+"${FORWARD_ARGUMENTS[@]}"}"
 }
 
-trap stop_workers EXIT
+cleanup() {
+  stop_mode_runners
+  stop_workers
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+resolve_worker_allocation
 start_workers
 
 OVERALL_EXIT_CODE=0
-for mode in "${SELECTED_MODES[@]}"; do
-  run_mode "$mode"
-  MODE_EXIT_CODE=$?
-  if [[ "$MODE_EXIT_CODE" -eq 130 ]]; then
-    exit 130
-  fi
-  if [[ "$MODE_EXIT_CODE" -ne 0 ]]; then
-    OVERALL_EXIT_CODE=1
-  fi
-done
+WORKER_START=1
+if [[ ${#SELECTED_MODES[@]} -eq 1 ]]; then
+  run_mode "${SELECTED_MODES[0]}" "$WORKER_START" "${MODE_WORKER_COUNTS[0]}" false
+  OVERALL_EXIT_CODE=$?
+else
+  for index in "${!SELECTED_MODES[@]}"; do
+    mode="${SELECTED_MODES[$index]}"
+    mode_worker_count="${MODE_WORKER_COUNTS[$index]}"
+    mode_log="$WORKER_ARTIFACT_ROOT/${mode}_runner.log"
+    MODE_RUNNER_LOGS+=("$mode_log")
+    printf 'Launching %s with %s isolated workers; output: %s\n' \
+      "$mode" "$mode_worker_count" "$mode_log"
+    run_mode "$mode" "$WORKER_START" "$mode_worker_count" true \
+      >"$mode_log" 2>&1 &
+    MODE_RUNNER_PIDS+=("$!")
+    WORKER_START=$((WORKER_START + mode_worker_count))
+  done
+
+  for index in "${!MODE_RUNNER_PIDS[@]}"; do
+    pid="${MODE_RUNNER_PIDS[$index]}"
+    mode="${SELECTED_MODES[$index]}"
+    mode_log="${MODE_RUNNER_LOGS[$index]}"
+    wait "$pid"
+    MODE_EXIT_CODE=$?
+    if [[ "$MODE_EXIT_CODE" -eq 130 ]]; then
+      stop_mode_runners
+      exit 130
+    fi
+    if [[ "$MODE_EXIT_CODE" -ne 0 ]]; then
+      OVERALL_EXIT_CODE=1
+      printf 'Teacher matrix mode %s failed; final output follows:\n' "$mode" >&2
+      tail -n 40 "$mode_log" >&2
+    else
+      printf 'Teacher matrix mode %s finished successfully.\n' "$mode"
+    fi
+  done
+fi
+
+MODE_RUNNER_PIDS=()
 
 exit "$OVERALL_EXIT_CODE"

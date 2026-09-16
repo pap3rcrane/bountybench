@@ -35,7 +35,8 @@ ERROR_PATTERNS = (
 STUDENT_MODEL = "openrouter/deepseek/deepseek-chat-v3-0324"
 TEACHER_MODEL = "google/gemini-3.6-flash"
 PRIMARY_BACKEND_CONTAINER = "backend-service"
-MATRIX_BACKEND_CONTAINERS = tuple(f"backend-worker-{number}" for number in range(1, 6))
+MATRIX_BACKEND_CONTAINERS = tuple(f"backend-worker-{number}" for number in range(1, 31))
+DEFAULT_ENVIRONMENT_WORKERS = 9
 PHASE_ITERATIONS = 300
 REPETITIONS = 5
 MAX_INPUT_TOKENS = 1048576
@@ -69,6 +70,10 @@ class Environment:
     repository: str
     bounty_number: str
     workflow_type: str
+
+    @property
+    def label(self) -> str:
+        return f"{self.repository} bounty {self.bounty_number} · {self.workflow_type}"
 
 
 @dataclass(frozen=True)
@@ -274,6 +279,15 @@ def parse_environment(value: str) -> Environment:
     return Environment(repository, bounty_number, workflow_type)
 
 
+def parse_backend_log_root(value: str) -> tuple[str, Path]:
+    container, separator, path = value.partition("=")
+    if not separator or not container or not path:
+        raise argparse.ArgumentTypeError(
+            "Backend log root must have the form CONTAINER=PATH"
+        )
+    return container, Path(path).expanduser().resolve()
+
+
 def build_configurations(
     *,
     environments: Iterable[Environment],
@@ -391,9 +405,7 @@ def load_successful_configuration_keys(status_paths: Iterable[str]) -> set[tuple
     return configuration_keys
 
 
-def configuration_key(
-    configuration: Configuration, teacher_type: str
-) -> tuple:
+def configuration_key(configuration: Configuration, teacher_type: str) -> tuple:
     environment = configuration.environment
     return (
         teacher_type,
@@ -409,11 +421,29 @@ def configuration_key(
 class MatrixRunner:
     def __init__(self, args: argparse.Namespace):
         self.args = args
-        self.backend_containers = (
-            [PRIMARY_BACKEND_CONTAINER]
-            if args.jobs == 1
-            else list(MATRIX_BACKEND_CONTAINERS[: args.jobs])
-        )
+        supplied_backends = list(getattr(args, "backend_container", []))
+        if supplied_backends:
+            if len(supplied_backends) != args.jobs:
+                raise ValueError(
+                    "--jobs must equal the number of --backend-container values"
+                )
+            if len(set(supplied_backends)) != len(supplied_backends):
+                raise ValueError("Backend container names must be unique")
+            self.backend_containers = supplied_backends
+        else:
+            self.backend_containers = (
+                [PRIMARY_BACKEND_CONTAINER]
+                if args.jobs == 1
+                else list(MATRIX_BACKEND_CONTAINERS[: args.jobs])
+            )
+        supplied_log_roots = dict(getattr(args, "backend_log_root", []))
+        unknown_log_roots = set(supplied_log_roots) - set(self.backend_containers)
+        if unknown_log_roots:
+            raise ValueError(
+                "Log roots supplied for unknown backend containers: "
+                + ", ".join(sorted(unknown_log_roots))
+            )
+        self.backend_log_roots = supplied_log_roots
         self.environments = args.environment
         self.prompt_files = args.prompt_file
         self.prompt_placement = getattr(args, "prompt_placement", "both")
@@ -501,7 +531,11 @@ class MatrixRunner:
             "phase_iterations": PHASE_ITERATIONS,
             "repetitions": REPETITIONS,
             "concurrent_jobs": self.args.jobs,
+            "worker_scope": "environment",
             "backend_containers": self.backend_containers,
+            "backend_log_roots": {
+                backend: str(path) for backend, path in self.backend_log_roots.items()
+            },
             "prompt_placement_selection": self.prompt_placement,
             "placements": list(self.placements) + ["none"],
             "skip_configuration_sources": self.skip_configuration_sources,
@@ -589,11 +623,23 @@ class MatrixRunner:
             "error": error,
         }
 
-    @staticmethod
-    def _host_log_path(path: Optional[str]) -> Optional[str]:
+    def _host_log_path(
+        self, path: Optional[str], backend_container: str
+    ) -> Optional[str]:
         if not path:
             return None
         candidate = Path(path)
+        worker_root = self.backend_log_roots.get(backend_container)
+        if worker_root is not None:
+            if candidate.is_absolute() and str(candidate).startswith("/app/logs/"):
+                return str(worker_root / "logs" / candidate.relative_to("/app/logs"))
+            if candidate.is_absolute() and str(candidate).startswith("/app/full_logs/"):
+                return str(
+                    worker_root / "full_logs" / candidate.relative_to("/app/full_logs")
+                )
+            if not candidate.is_absolute() and candidate.parts:
+                if candidate.parts[0] in {"logs", "full_logs"}:
+                    return str(worker_root / candidate)
         if candidate.is_absolute() and str(candidate).startswith("/app/"):
             candidate = REPOSITORY_ROOT / candidate.relative_to("/app")
         elif not candidate.is_absolute():
@@ -737,10 +783,10 @@ class MatrixRunner:
                         f"{mounted_prompt}. Rebuild and rerun the launcher."
                     )
 
-    def _prune_dind(self, repository: str, backend_container: str) -> None:
+    def _prune_dind(self, environment_label: str, backend_container: str) -> None:
         """Remove unused DinD resources without deleting tagged images."""
         self.progress.write(
-            f"Pruning unused DinD resources after {repository} "
+            f"Pruning unused DinD resources after {environment_label} "
             f"in {backend_container}..."
         )
         result = subprocess.run(
@@ -761,7 +807,7 @@ class MatrixRunner:
         if result.returncode != 0:
             error = compact_error(result.stderr or result.stdout) or "Unknown error."
             self.progress.write(
-                f"WARNING: DinD cleanup after {repository} in "
+                f"WARNING: DinD cleanup after {environment_label} in "
                 f"{backend_container} failed: {error}"
             )
             return
@@ -769,7 +815,8 @@ class MatrixRunner:
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         summary = lines[-1] if lines else "cleanup completed"
         self.progress.write(
-            f"DinD cleanup after {repository} in {backend_container}: {summary}"
+            f"DinD cleanup after {environment_label} in "
+            f"{backend_container}: {summary}"
         )
 
     def _handle_event(
@@ -803,7 +850,7 @@ class MatrixRunner:
                     time.monotonic() - state.started_monotonic, 3
                 )
             state.workflow_log_path = self._host_log_path(
-                event.get("workflow_log_path")
+                event.get("workflow_log_path"), backend_container
             )
             state.error = event_error
             self._record_student(configuration, state)
@@ -1034,34 +1081,31 @@ class MatrixRunner:
         self.progress.finish_configuration("skipped", backend_container)
         return "skipped"
 
-    def _configuration_groups(self) -> list[tuple[str, list[Configuration]]]:
-        """Group all work for one repository so it can never overlap itself."""
-        grouped = {}
+    def _configuration_groups(
+        self,
+    ) -> list[tuple[Environment, list[Configuration]]]:
+        """Keep every configuration for an environment on one worker."""
+        grouped: dict[Environment, list[Configuration]] = {}
         for configuration in self.configurations:
-            repository = configuration.environment.repository
-            grouped.setdefault(repository, []).append(configuration)
+            grouped.setdefault(configuration.environment, []).append(configuration)
         return list(grouped.items())
 
-    def _run_repository_group(
-        self, repository: str, configurations: list[Configuration]
+    def _run_environment_group(
+        self, environment: Environment, configurations: list[Configuration]
     ) -> None:
         backend_container = self._available_backends.get()
         try:
             self.progress.write(
-                f"{backend_container}: starting repository {repository} "
+                f"{backend_container}: starting environment {environment.label} "
                 f"({len(configurations)} configurations)"
             )
             for configuration in configurations:
                 if self._stop_event.is_set():
                     return
                 if configuration.configuration_id in self.skip_configuration_ids:
-                    status = self._skip_configuration(
-                        configuration, backend_container
-                    )
+                    status = self._skip_configuration(configuration, backend_container)
                 else:
-                    status = self._run_configuration(
-                        configuration, backend_container
-                    )
+                    status = self._run_configuration(configuration, backend_container)
                 with self._state_lock:
                     self.completed_configurations += 1
                     if status == "failure":
@@ -1072,7 +1116,7 @@ class MatrixRunner:
                 and not self.args.dry_run
                 and not self._stop_event.is_set()
             ):
-                self._prune_dind(repository, backend_container)
+                self._prune_dind(environment.label, backend_container)
         finally:
             self._available_backends.put(backend_container)
 
@@ -1091,15 +1135,17 @@ class MatrixRunner:
                 process.kill()
                 process.wait()
 
-    def _run_configuration_groups(self) -> list[str]:
+    def _run_environment_groups(self) -> list[str]:
         groups = self._configuration_groups()
         if self.args.jobs == 1 or self.args.dry_run:
             errors = []
-            for repository, configurations in groups:
+            for environment, configurations in groups:
                 try:
-                    self._run_repository_group(repository, configurations)
+                    self._run_environment_group(environment, configurations)
                 except Exception as error:
-                    errors.append(f"{repository}: {error.__class__.__name__}: {error}")
+                    errors.append(
+                        f"{environment.label}: {error.__class__.__name__}: {error}"
+                    )
             return errors
 
         executor = ThreadPoolExecutor(
@@ -1107,19 +1153,21 @@ class MatrixRunner:
             thread_name_prefix="teacher-matrix",
         )
         futures = {
-            executor.submit(self._run_repository_group, repository, configurations): (
-                repository
+            executor.submit(self._run_environment_group, environment, configurations): (
+                environment
             )
-            for repository, configurations in groups
+            for environment, configurations in groups
         }
         errors = []
         try:
             for future in as_completed(futures):
-                repository = futures[future]
+                environment = futures[future]
                 try:
                     future.result()
                 except Exception as error:
-                    errors.append(f"{repository}: {error.__class__.__name__}: {error}")
+                    errors.append(
+                        f"{environment.label}: {error.__class__.__name__}: {error}"
+                    )
         except KeyboardInterrupt:
             self._stop_event.set()
             self._terminate_active_processes()
@@ -1156,9 +1204,9 @@ class MatrixRunner:
         try:
             if not self.args.dry_run:
                 self._preflight()
-            repository_errors = self._run_configuration_groups()
-            if repository_errors:
-                batch_error = compact_error("; ".join(repository_errors))
+            environment_errors = self._run_environment_groups()
+            if environment_errors:
+                batch_error = compact_error("; ".join(environment_errors))
         except KeyboardInterrupt:
             interrupted = True
             self._stop_event.set()
@@ -1214,9 +1262,29 @@ def create_parser() -> argparse.ArgumentParser:
         "--jobs",
         type=int,
         choices=range(1, len(MATRIX_BACKEND_CONTAINERS) + 1),
-        default=5,
-        metavar="1-5",
-        help="Number of isolated repository workers to run concurrently.",
+        default=DEFAULT_ENVIRONMENT_WORKERS,
+        metavar=f"1-{len(MATRIX_BACKEND_CONTAINERS)}",
+        help=(
+            "Number of isolated environment workers to run concurrently "
+            f"(default: {DEFAULT_ENVIRONMENT_WORKERS})."
+        ),
+    )
+    parser.add_argument(
+        "--backend-container",
+        action="append",
+        default=[],
+        help=(
+            "Explicit isolated backend container to use; repeat once per job. "
+            "The launcher uses this to give concurrent modes disjoint workers."
+        ),
+    )
+    parser.add_argument(
+        "--backend-log-root",
+        action="append",
+        default=[],
+        type=parse_backend_log_root,
+        metavar="CONTAINER=PATH",
+        help="Host artifact root mounted into one backend container.",
     )
     parser.add_argument(
         "--teacher-mode",
@@ -1253,9 +1321,9 @@ def create_parser() -> argparse.ArgumentParser:
         "--prune-dind-between-repositories",
         action="store_true",
         help=(
-            "After each repository, prune unused containers, networks, volumes, "
-            "dangling images, and build cache inside the backend's Docker daemon. "
-            "Tagged images are preserved."
+            "After each environment finishes, prune unused containers, networks, "
+            "volumes, dangling images, and build cache inside the backend's Docker "
+            "daemon. Tagged images are preserved."
         ),
     )
     parser.add_argument(

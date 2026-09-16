@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Print complete Gemini prompt payloads for teacher prompt/workflow pairs.
+"""Print complete Gemini prompt payloads for every teacher prompt option.
 
 This is a dry test utility. It uses deterministic representative student traces and
 the production teacher prompt builders, but it never initializes Docker and never
@@ -293,31 +293,71 @@ def build_requests(
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     temperature: float = DEFAULT_TEMPERATURE,
 ) -> list[dict]:
+    prompt_names = list(prompt_names)
+    placements = list(placements)
     requests = []
     for workflow_type in workflow_types:
         source_logs = _write_source_logs(fixture_directory, workflow_type)
-        for prompt_name in prompt_names:
-            mode = PROMPT_MODE[prompt_name]
-            for placement in placements:
+        for mode, mode_prompt_names in PROMPTS_BY_MODE.items():
+            selected_prompt_names = [
+                prompt_name
+                for prompt_name in prompt_names
+                if prompt_name in mode_prompt_names
+            ]
+            if not selected_prompt_names:
+                continue
+
+            # `none` is one no-custom-prompt baseline per selected teacher mode,
+            # rather than a duplicate baseline for each prompt file in that mode.
+            if TeacherSystemPromptPlacement.NONE in placements:
                 requests.append(
                     _gemini_request(
                         workflow_type=workflow_type,
-                        prompt_name=prompt_name,
+                        prompt_name=None,
                         mode=mode,
-                        placement=placement,
+                        placement=TeacherSystemPromptPlacement.NONE,
                         source_logs=source_logs,
                         max_input_tokens=max_input_tokens,
                         max_output_tokens=max_output_tokens,
                         temperature=temperature,
                     )
                 )
+
+            for prompt_name in selected_prompt_names:
+                for placement in placements:
+                    if placement is TeacherSystemPromptPlacement.NONE:
+                        continue
+                    requests.append(
+                        _gemini_request(
+                            workflow_type=workflow_type,
+                            prompt_name=prompt_name,
+                            mode=mode,
+                            placement=placement,
+                            source_logs=source_logs,
+                            max_input_tokens=max_input_tokens,
+                            max_output_tokens=max_output_tokens,
+                            temperature=temperature,
+                        )
+                    )
     return requests
 
 
 def _render_text(requests: list[dict]) -> str:
     sections = [
         "TEST FIXTURE: deterministic representative traces are used; real Gemini "
-        "contents change with the complete student trace."
+        "contents change with the complete student trace.\n\n"
+        "PLACEMENT OPTIONS\n"
+        "- none: no custom prompt file; task and trace are sent as contents. "
+        "objective_rewrite still uses its JSON response-format system instruction.\n"
+        "- prepend: custom prompt, task, and trace are combined in contents; "
+        "system_instruction is empty.\n"
+        "- system: custom prompt and task are sent in Gemini system_instruction; "
+        "contents contains only the trace.\n\n"
+        "PROMPT OPTIONS BY TEACHER MODE\n"
+        + "\n".join(
+            f"- {mode.value}: {', '.join(prompt_names)}"
+            for mode, prompt_names in PROMPTS_BY_MODE.items()
+        )
     ]
     for number, request in enumerate(requests, start=1):
         api = request["gemini_api"]
@@ -373,10 +413,11 @@ def _parser() -> argparse.ArgumentParser:
         "--placement",
         action="append",
         choices=(
+            TeacherSystemPromptPlacement.NONE.value,
             TeacherSystemPromptPlacement.PREPEND.value,
             TeacherSystemPromptPlacement.SYSTEM.value,
         ),
-        help="Prompt placement to include; repeat this flag. Default: both.",
+        help="Prompt placement to include; repeat this flag. Default: all three.",
     )
     parser.add_argument(
         "--format",
@@ -422,6 +463,7 @@ def main() -> int:
         for value in (
             args.placement
             or (
+                TeacherSystemPromptPlacement.NONE.value,
                 TeacherSystemPromptPlacement.PREPEND.value,
                 TeacherSystemPromptPlacement.SYSTEM.value,
             )

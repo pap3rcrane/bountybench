@@ -251,19 +251,31 @@ Run a matrix with a progress-focused terminal:
 ./run_teacher_matrix.sh
 ```
 
-The launcher runs five repositories concurrently by default. Each job receives its own
-`backend-worker-N` container, repository filesystem, and Docker-in-Docker volume, while
-all configurations for the same repository remain sequential. This prevents concurrent
-runs from resetting the same Git checkout or Docker environment. Use `--jobs 1` through
-`--jobs 5` to change the limit:
+The launcher runs one isolated worker for every selected environment by default. The
+three teacher modes run concurrently on disjoint worker sets, so the default all-mode
+launch uses 27 active workers: nine environments per mode. The pool supports up to 30
+workers; the final three are spare capacity because the current matrix has only 27
+environment groups.
+
+Each worker receives its own container filesystem, private bridge network, fresh
+Docker-in-Docker volume, and artifact directory. Workers share only the read-only
+backend image layers and read-only prompt mounts. A worker runs its environment's
+complete sequence sequentially: all selected system prompts, placements, repetitions
+1–5, and `none` baselines. It cannot reset, address by Docker DNS, or mount another
+worker's repository, Docker daemon, or artifacts.
+
+`--jobs` is the per-mode limit. Use `--jobs 1` through `--jobs 30` to throttle the
+launch, or `--jobs all` explicitly. Values above the number of environments in a mode
+are clamped to that count, currently nine:
 
 ```bash
 ./run_teacher_matrix.sh --jobs 3
 ```
 
-The isolated workers are stopped when the launcher exits. Their named Docker volumes are
-retained so later runs can reuse downloaded images; use
-`--prune-dind-between-repositories` when storage is more important than cache reuse.
+The isolated containers, private networks, and fresh DinD volumes are removed when the
+launcher exits. Worker logs, full logs, generated objectives, and concurrent-mode runner
+output remain under `batch_logs/matrix_workers/<launch-id>/`. This avoids cache or state
+leaking between matrix launches and bounds persistent storage growth.
 
 Run only selected modes with a comma-separated list:
 
@@ -292,15 +304,18 @@ but whose top-level configuration record had not yet finalized. Skipped configur
 are written into the new status index with status `skipped` for complete accounting.
 
 With no `--modes` flag, the launcher runs `observe`, `steer`, and
-`objective_rewrite` sequentially. Run `./run_teacher_matrix.sh --help` for all flags.
+`objective_rewrite` concurrently. Each mode keeps its own status index and receives a
+non-overlapping worker range. Run `./run_teacher_matrix.sh --help` for all flags.
 
 The outer `tqdm` bar tracks completed configurations and estimates the remaining time
 from their complete elapsed durations, including environment setup, model calls,
-evaluation, and cleanup. Up to five job bars track each active workflow's completed
-iterations out of 300. Objective rewriting labels `source_1`, `source_2`, `source_3`,
-the teacher rewrite, and the final `rewritten_objective` student separately.
+evaluation, and cleanup. A single selected mode displays up to nine live job bars.
+Concurrent modes write plain progress to their mode-specific runner logs to avoid three
+progress renderers corrupting the terminal. Objective rewriting labels `source_1`,
+`source_2`, `source_3`, the teacher rewrite, and the final `rewritten_objective` student
+separately.
 
-To reclaim Docker-in-Docker storage after each repository finishes, add:
+To reclaim Docker-in-Docker storage after each environment finishes, add:
 
 ```bash
 ./run_teacher_matrix.sh --prune-dind-between-repositories
@@ -308,7 +323,12 @@ To reclaim Docker-in-Docker storage after each repository finishes, add:
 
 This removes unused inner containers, networks, volumes, dangling images, and build
 cache. It deliberately preserves tagged images such as `cybench/bountyagent:latest`.
-Cleanup failures are reported as warnings and do not stop later repository runs.
+Cleanup failures are reported as warnings and do not stop later environment runs.
+
+The launcher does not impose memory or free-storage limits on workers. You can optionally
+set `MATRIX_WORKER_CPU_LIMIT` to apply the same CPU quota to every worker. When no CPU
+quota is configured, the launcher detects the host core count and warns—but does not
+abort—if active workers outnumber it.
 
 Detailed child output is saved under `batch_logs/<teacher-mode>/<timestamp>/` instead of
 flooding the terminal. Add `--verbose` to stream those lines too, or `--no-progress` for
@@ -334,7 +354,8 @@ BATCH_LOG_ROOT=/tmp/bountybench-matrix ./run_teacher_matrix.sh \
 ```
 
 Print the complete Gemini prompt payload for every detect/exploit/patch workflow,
-uploaded system prompt, and `prepend`/`system` placement pair:
+uploaded system prompt, `prepend`/`system` placement pair, and mode-specific `none`
+baseline:
 
 ```bash
 python scripts/print_teacher_prompts.py \
@@ -342,10 +363,14 @@ python scripts/print_teacher_prompts.py \
 ```
 
 This is a dry test: it uses deterministic representative traces and the production
-prompt-building code, but does not call Gemini or start Docker. Each section prints the
-exact `system_instruction`, `contents`, and generation configuration that would be sent
-for that fixture. Use `--format json` for structured output, or filter with repeatable
-`--workflow`, `--prompt`, and `--placement` flags.
+prompt-building code, but does not call Gemini or start Docker. The output starts with
+an index of all 15 prompt files grouped by teacher mode and all three placement options.
+Its 99 request examples then show the exact `system_instruction`, `contents`, and
+generation configuration that would be sent for each fixture. Use `--format json` for
+structured output, or filter with repeatable `--workflow`, `--prompt`, and `--placement`
+flags. Selecting `--placement none` emits one baseline for each teacher mode selected by
+the prompt filters; it does not duplicate the identical baseline for all five prompt
+files in that mode.
 
 Then launch any group directly. Failures are recorded in `run_status.jsonl` and the
 individual configuration log, and the remaining configurations continue running.

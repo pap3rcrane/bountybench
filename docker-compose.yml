@@ -8,15 +8,6 @@ x-backend-environment: &backend-environment
   - GOOGLE_API_KEY=${GOOGLE_API_KEY}
   - TOGETHER_API_KEY=${TOGETHER_API_KEY}
 
-x-matrix-worker: &matrix-worker
-  image: bountybench-backend
-  privileged: true
-  command: ["tail", "-f", "/dev/null"]
-  profiles: ["matrix-workers"]
-  networks:
-    - app-network
-  environment: *backend-environment
-
 services:
   nginx:
       build:
@@ -51,56 +42,6 @@ services:
       - app-network
     environment: *backend-environment
 
-  backend-worker-1:
-    <<: *matrix-worker
-    container_name: backend-worker-1
-    volumes:
-      - dind-data-worker-1:/var/lib/docker
-      - ./logs:/app/logs
-      - ./full_logs:/app/full_logs
-      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
-      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
-
-  backend-worker-2:
-    <<: *matrix-worker
-    container_name: backend-worker-2
-    volumes:
-      - dind-data-worker-2:/var/lib/docker
-      - ./logs:/app/logs
-      - ./full_logs:/app/full_logs
-      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
-      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
-
-  backend-worker-3:
-    <<: *matrix-worker
-    container_name: backend-worker-3
-    volumes:
-      - dind-data-worker-3:/var/lib/docker
-      - ./logs:/app/logs
-      - ./full_logs:/app/full_logs
-      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
-      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
-
-  backend-worker-4:
-    <<: *matrix-worker
-    container_name: backend-worker-4
-    volumes:
-      - dind-data-worker-4:/var/lib/docker
-      - ./logs:/app/logs
-      - ./full_logs:/app/full_logs
-      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
-      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
-
-  backend-worker-5:
-    <<: *matrix-worker
-    container_name: backend-worker-5
-    volumes:
-      - dind-data-worker-5:/var/lib/docker
-      - ./logs:/app/logs
-      - ./full_logs:/app/full_logs
-      - ./prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro
-      - ./prompts/system_prompts:/app/prompts/system_prompts:ro
-
   frontend:
     build:
       context: ./frontend
@@ -119,13 +60,3 @@ networks:
 volumes:
   dind-data:
     name: dind-data
-  dind-data-worker-1:
-    name: bountybench-dind-data-worker-1
-  dind-data-worker-2:
-    name: bountybench-dind-data-worker-2
-  dind-data-worker-3:
-    name: bountybench-dind-data-worker-3
-  dind-data-worker-4:
-    name: bountybench-dind-data-worker-4
-  dind-data-worker-5:
-    name: bountybench-dind-data-worker-5
