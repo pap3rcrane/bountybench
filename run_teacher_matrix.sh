@@ -50,6 +50,14 @@ set -uo pipefail
 #                       Optional CPU quota per worker, for example 2. Omitted by default.
 #   MATRIX_WORKER_LOCK_DIRECTORY
 #                       Override the single-launcher lock path (primarily for tests).
+#   MATRIX_REGISTRY_CACHE_ENABLED
+#                       Share Docker Hub downloads through one pull-through cache while
+#                       retaining a separate Docker daemon per worker. Default: true.
+#   MATRIX_REGISTRY_CACHE_IMAGE
+#                       Registry image used for the cache. Default:
+#                       mirror.gcr.io/library/registry:2.
+#   DOCKERHUB_USERNAME Docker Hub username for authenticated upstream pulls (optional).
+#   DOCKERHUB_TOKEN    Docker Hub access token; required with DOCKERHUB_USERNAME.
 
 REPOSITORY_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 cd "$REPOSITORY_ROOT"
@@ -188,6 +196,12 @@ done
 
 MAX_MATRIX_WORKERS=30
 MATRIX_WORKER_CPU_LIMIT="${MATRIX_WORKER_CPU_LIMIT:-}"
+MATRIX_REGISTRY_CACHE_ENABLED="${MATRIX_REGISTRY_CACHE_ENABLED:-true}"
+MATRIX_REGISTRY_CACHE_IMAGE="${MATRIX_REGISTRY_CACHE_IMAGE:-mirror.gcr.io/library/registry:2}"
+MATRIX_REGISTRY_CACHE_CONTAINER="bountybench-matrix-registry-cache"
+MATRIX_REGISTRY_CACHE_VOLUME="bountybench-matrix-registry-cache"
+MATRIX_REGISTRY_CACHE_ALIAS="matrix-registry-cache"
+MATRIX_REGISTRY_CACHE_URL="http://$MATRIX_REGISTRY_CACHE_ALIAS:5000"
 MATRIX_LAUNCH_ID="$(date +%Y%m%d-%H%M%S)-$$"
 MATRIX_WORKER_COUNT=0
 ACTIVE_WORKER_SERVICES=()
@@ -196,6 +210,21 @@ ACTIVE_WORKER_VOLUMES=()
 WORKERS_STARTED=false
 WORKER_LOCK_DIRECTORY="${MATRIX_WORKER_LOCK_DIRECTORY:-/tmp/bountybench-teacher-matrix-workers.lock}"
 WORKER_LOCK_ACQUIRED=false
+
+case "$MATRIX_REGISTRY_CACHE_ENABLED" in
+  true|false) ;;
+  *)
+    printf 'ERROR: MATRIX_REGISTRY_CACHE_ENABLED must be true or false.\n' >&2
+    exit 2
+    ;;
+esac
+
+if [[ -n "${DOCKERHUB_USERNAME:-}" || -n "${DOCKERHUB_TOKEN:-}" ]]; then
+  if [[ -z "${DOCKERHUB_USERNAME:-}" || -z "${DOCKERHUB_TOKEN:-}" ]]; then
+    printf 'ERROR: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must be set together.\n' >&2
+    exit 2
+  fi
+fi
 
 if [[ "${BATCH_LOG_ROOT:-$REPOSITORY_ROOT/batch_logs}" = /* ]]; then
   MATRIX_BATCH_LOG_ROOT="${BATCH_LOG_ROOT:-$REPOSITORY_ROOT/batch_logs}"
@@ -206,10 +235,16 @@ WORKER_ARTIFACT_ROOT="$MATRIX_BATCH_LOG_ROOT/matrix_workers/$MATRIX_LAUNCH_ID"
 
 stop_workers() {
   if [[ "$WORKERS_STARTED" == true ]]; then
-    printf 'Removing isolated matrix workers and their DinD volumes...\n'
+    printf 'Removing isolated matrix workers, registry cache, and DinD volumes...\n'
     docker rm -f "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null 2>&1 || true
+    if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
+      docker rm -f "$MATRIX_REGISTRY_CACHE_CONTAINER" >/dev/null 2>&1 || true
+    fi
     docker network rm "${ACTIVE_WORKER_NETWORKS[@]}" >/dev/null 2>&1 || true
     docker volume rm "${ACTIVE_WORKER_VOLUMES[@]}" >/dev/null 2>&1 || true
+    if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
+      docker volume rm "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null 2>&1 || true
+    fi
   fi
   if [[ "$WORKER_LOCK_ACQUIRED" == true ]]; then
     rmdir "$WORKER_LOCK_DIRECTORY" 2>/dev/null || true
@@ -256,19 +291,69 @@ start_workers() {
   # The global launcher lock guarantees these can only be stale workers from an
   # interrupted prior launch, never containers owned by another active matrix.
   docker rm -f "${ACTIVE_WORKER_SERVICES[@]}" >/dev/null 2>&1 || true
+  docker rm -f "$MATRIX_REGISTRY_CACHE_CONTAINER" >/dev/null 2>&1 || true
+  docker volume rm "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null 2>&1 || true
 
   printf 'Starting %s fully isolated matrix workers...\n' "$MATRIX_WORKER_COUNT"
   WORKERS_STARTED=true
   for ((job = 1; job <= MATRIX_WORKER_COUNT; job++)); do
-    worker_name="backend-worker-$job"
     network_name="bb-matrix-$MATRIX_LAUNCH_ID-worker-$job"
     volume_name="bb-matrix-$MATRIX_LAUNCH_ID-worker-$job-dind"
-    worker_root="$WORKER_ARTIFACT_ROOT/$worker_name"
     ACTIVE_WORKER_NETWORKS+=("$network_name")
     ACTIVE_WORKER_VOLUMES+=("$volume_name")
 
     docker network create "$network_name" >/dev/null
     docker volume create "$volume_name" >/dev/null
+  done
+
+  if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
+    if ! docker image inspect "$MATRIX_REGISTRY_CACHE_IMAGE" >/dev/null 2>&1; then
+      printf 'Pulling shared matrix registry cache image: %s\n' \
+        "$MATRIX_REGISTRY_CACHE_IMAGE"
+      if ! docker pull "$MATRIX_REGISTRY_CACHE_IMAGE"; then
+        printf 'ERROR: unable to pull registry cache image %s.\n' \
+          "$MATRIX_REGISTRY_CACHE_IMAGE" >&2
+        exit 1
+      fi
+    fi
+
+    docker volume create "$MATRIX_REGISTRY_CACHE_VOLUME" >/dev/null
+    local cache_command=(
+      docker run -d
+      --name "$MATRIX_REGISTRY_CACHE_CONTAINER"
+      --network none
+      --volume "$MATRIX_REGISTRY_CACHE_VOLUME:/var/lib/registry"
+      --env REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
+    )
+    if [[ -n "${DOCKERHUB_USERNAME:-}" ]]; then
+      cache_command+=(
+        --env "REGISTRY_PROXY_USERNAME=$DOCKERHUB_USERNAME"
+        --env "REGISTRY_PROXY_PASSWORD=$DOCKERHUB_TOKEN"
+      )
+    fi
+    cache_command+=("$MATRIX_REGISTRY_CACHE_IMAGE")
+    if ! "${cache_command[@]}" >/dev/null; then
+      printf 'ERROR: failed to start the shared Docker registry cache.\n' >&2
+      exit 1
+    fi
+
+    for network_name in "${ACTIVE_WORKER_NETWORKS[@]}"; do
+      if ! docker network connect \
+        --alias "$MATRIX_REGISTRY_CACHE_ALIAS" \
+        "$network_name" \
+        "$MATRIX_REGISTRY_CACHE_CONTAINER"; then
+        printf 'ERROR: failed to connect the registry cache to %s.\n' \
+          "$network_name" >&2
+        exit 1
+      fi
+    done
+  fi
+
+  for ((job = 1; job <= MATRIX_WORKER_COUNT; job++)); do
+    worker_name="backend-worker-$job"
+    network_name="${ACTIVE_WORKER_NETWORKS[$((job - 1))]}"
+    volume_name="${ACTIVE_WORKER_VOLUMES[$((job - 1))]}"
+    worker_root="$WORKER_ARTIFACT_ROOT/$worker_name"
 
     local docker_command=(
       docker run -d
@@ -283,6 +368,9 @@ start_workers() {
       --volume "$REPOSITORY_ROOT/prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro"
       --volume "$REPOSITORY_ROOT/prompts/system_prompts:/app/prompts/system_prompts:ro"
     )
+    if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
+      docker_command+=(--env "DOCKER_REGISTRY_MIRROR=$MATRIX_REGISTRY_CACHE_URL")
+    fi
     if [[ -f "$REPOSITORY_ROOT/.env" ]]; then
       docker_command+=(--env-file "$REPOSITORY_ROOT/.env")
     fi
@@ -295,7 +383,9 @@ start_workers() {
       AZURE_OPENAI_ENDPOINT \
       ANTHROPIC_API_KEY \
       GOOGLE_API_KEY \
-      TOGETHER_API_KEY; do
+      TOGETHER_API_KEY \
+      DOCKERHUB_USERNAME \
+      DOCKERHUB_TOKEN; do
       if [[ -n "${!environment_variable:-}" ]]; then
         docker_command+=(--env "$environment_variable")
       fi

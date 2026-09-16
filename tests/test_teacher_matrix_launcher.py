@@ -6,6 +6,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = PROJECT_ROOT / "run_teacher_matrix.sh"
+DOCKERD_ENTRYPOINT = PROJECT_ROOT / "tools" / "dockerd-entrypoint.sh"
 
 
 def _argument_values(arguments, option):
@@ -68,12 +69,48 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
 
     assert result.returncode == 0, result.stderr
     docker_commands = docker_log.read_text().splitlines()
-    worker_commands = [
+    detached_run_commands = [
         shlex.split(command)
         for command in docker_commands
         if command.startswith("run -d ")
     ]
+    worker_commands = [
+        arguments
+        for arguments in detached_run_commands
+        if _argument_values(arguments, "--name")[0].startswith("backend-worker-")
+    ]
+    cache_commands = [
+        arguments
+        for arguments in detached_run_commands
+        if _argument_values(arguments, "--name")
+        == ["bountybench-matrix-registry-cache"]
+    ]
     assert len(worker_commands) == 30
+    assert len(cache_commands) == 1
+
+    cache_arguments = cache_commands[0]
+    assert _argument_values(cache_arguments, "--network") == ["none"]
+    assert _argument_values(cache_arguments, "--env") == [
+        "REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io"
+    ]
+    assert _argument_values(cache_arguments, "--volume") == [
+        "bountybench-matrix-registry-cache:/var/lib/registry"
+    ]
+    assert cache_arguments[-1] == "mirror.gcr.io/library/registry:2"
+
+    cache_network_commands = [
+        shlex.split(command)
+        for command in docker_commands
+        if command.startswith("network connect ")
+    ]
+    assert len(cache_network_commands) == 30
+    assert {
+        _argument_values(arguments, "--alias")[0]
+        for arguments in cache_network_commands
+    } == {"matrix-registry-cache"}
+    assert {
+        arguments[-1] for arguments in cache_network_commands
+    } == {"bountybench-matrix-registry-cache"}
 
     worker_names = set()
     worker_networks = set()
@@ -83,6 +120,9 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         worker_name = _argument_values(arguments, "--name")[0]
         worker_names.add(worker_name)
         worker_networks.add(_argument_values(arguments, "--network")[0])
+        assert "DOCKER_REGISTRY_MIRROR=http://matrix-registry-cache:5000" in (
+            _argument_values(arguments, "--env")
+        )
         assert "--memory" not in arguments
         assert "--memory-swap" not in arguments
 
@@ -116,3 +156,13 @@ def test_all_modes_reuse_one_pool_of_thirty_isolated_workers(tmp_path):
         "steer": expected_workers,
         "objective_rewrite": expected_workers,
     }
+
+
+def test_worker_entrypoint_uses_optional_mirror_without_architecture_specific_helper():
+    entrypoint = DOCKERD_ENTRYPOINT.read_text()
+
+    assert '--registry-mirror "$DOCKER_REGISTRY_MIRROR"' in entrypoint
+    assert '--insecure-registry "$MIRROR_HOST"' in entrypoint
+    assert "docker login --username" in entrypoint
+    assert "docker-credential-pass" not in entrypoint
+    assert "linux-arm64" not in entrypoint
