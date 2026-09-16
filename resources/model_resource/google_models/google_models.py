@@ -1,4 +1,5 @@
 from datetime import datetime
+from time import sleep
 from typing import List, Optional
 
 from google import genai
@@ -6,6 +7,13 @@ from google.genai import types
 
 from resources.model_resource.model_provider import ModelProvider
 from resources.model_resource.model_response import ModelResponse
+from utils.logger import get_main_logger
+
+
+logger = get_main_logger(__name__)
+
+RATE_LIMIT_MAX_RETRIES = 3
+RATE_LIMIT_BACKOFF_SECONDS = 60
 
 
 class GoogleModels(ModelProvider):
@@ -16,6 +24,53 @@ class GoogleModels(ModelProvider):
         self, model: Optional[str] = None, system_prompt: Optional[str] = None
     ) -> genai.Client:
         return genai.Client(api_key=self._api_key())
+
+    @staticmethod
+    def _status_code(error: Exception) -> Optional[int]:
+        candidates = [
+            getattr(error, "status_code", None),
+            getattr(getattr(error, "response", None), "status_code", None),
+            getattr(error, "code", None),
+        ]
+        for candidate in candidates:
+            try:
+                return int(candidate)
+            except (TypeError, ValueError):
+                continue
+
+        details = getattr(error, "details", None)
+        if isinstance(details, list):
+            for detail in details:
+                status = getattr(detail, "status", None)
+                try:
+                    return int(status)
+                except (TypeError, ValueError):
+                    if status == "RESOURCE_EXHAUSTED":
+                        return 429
+
+        error_text = str(error)
+        if "RESOURCE_EXHAUSTED" in error_text or "429" in error_text:
+            return 429
+        return None
+
+    def _generate_content_with_rate_limit_retry(self, **request_kwargs):
+        for retry_number in range(RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                return self.client.models.generate_content(**request_kwargs)
+            except Exception as error:
+                status_code = self._status_code(error)
+                if status_code is not None:
+                    error.status_code = status_code
+                if status_code != 429 or retry_number == RATE_LIMIT_MAX_RETRIES:
+                    raise
+
+                logger.warning(
+                    "Gemini rate limit reached. Retrying %s/%s in %s seconds.",
+                    retry_number + 1,
+                    RATE_LIMIT_MAX_RETRIES,
+                    RATE_LIMIT_BACKOFF_SECONDS,
+                )
+                sleep(RATE_LIMIT_BACKOFF_SECONDS)
 
     def request(
         self,
@@ -35,7 +90,7 @@ class GoogleModels(ModelProvider):
         status_code = None
 
         try:
-            response = self.client.models.generate_content(
+            response = self._generate_content_with_rate_limit_retry(
                 model=model_id,
                 contents=message,
                 config=types.GenerateContentConfig(
@@ -70,18 +125,7 @@ class GoogleModels(ModelProvider):
                 status_code=status_code,
             )
         except Exception as e:
-            try:
-                if hasattr(e, "status_code"):
-                    status_code = e.status_code
-                elif hasattr(e, "response") and hasattr(e.response, "status_code"):
-                    status_code = e.response.status_code
-                elif hasattr(e, "details") and isinstance(e.details, list):
-                    for detail in e.details:
-                        if hasattr(detail, "status") and detail.status.isdigit():
-                            status_code = int(detail.status)
-                            break
-            except Exception:
-                pass
+            status_code = self._status_code(e)
 
             if status_code is not None:
                 e.status_code = status_code

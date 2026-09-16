@@ -1,6 +1,7 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
+import pytest
 from google import genai
 from google.genai import types
 
@@ -95,6 +96,66 @@ def test_gemini_high_thinking_is_passed_in_generation_config():
 
     config = client.models.generate_content.call_args.kwargs["config"]
     assert config.thinking_config.thinking_level is types.ThinkingLevel.HIGH
+
+
+def test_gemini_retries_rate_limits_three_times_with_fixed_backoff():
+    rate_limit_error = Exception("429 RESOURCE_EXHAUSTED")
+    response = MagicMock()
+    response.text = "Teacher response"
+    response.usage_metadata.candidates_token_count = 4
+    client = MagicMock()
+    client.models.generate_content.side_effect = [
+        rate_limit_error,
+        rate_limit_error,
+        rate_limit_error,
+        response,
+    ]
+    client.models.count_tokens.return_value.total_tokens = 3
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+        patch(
+            "resources.model_resource.google_models.google_models.sleep"
+        ) as mock_sleep,
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+        )
+
+    assert result.content == "Teacher response"
+    assert client.models.generate_content.call_count == 4
+    assert mock_sleep.call_args_list == [call(60), call(60), call(60)]
+
+
+def test_gemini_raises_after_three_rate_limit_retries():
+    rate_limit_error = Exception("429 RESOURCE_EXHAUSTED")
+    client = MagicMock()
+    client.models.generate_content.side_effect = rate_limit_error
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+        patch(
+            "resources.model_resource.google_models.google_models.sleep"
+        ) as mock_sleep,
+    ):
+        with pytest.raises(Exception, match="RESOURCE_EXHAUSTED") as error:
+            GoogleModels().request(
+                model="google/gemini-3.6-flash",
+                message="TRACE AND INSTRUCTIONS",
+                temperature=0.0,
+                max_tokens=100,
+                stop_sequences=[],
+            )
+
+    assert error.value.status_code == 429
+    assert client.models.generate_content.call_count == 4
+    assert mock_sleep.call_args_list == [call(60), call(60), call(60)]
 
 
 def test_model_resource_forwards_separate_gemini_system_prompt():
