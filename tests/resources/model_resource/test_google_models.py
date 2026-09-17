@@ -278,6 +278,34 @@ def test_model_resource_forwards_separate_gemini_system_prompt():
     )
 
 
+def test_direct_gemini_reserves_input_headroom_for_tokenizer_differences():
+    provider = MagicMock()
+    provider.make_request.return_value = ModelResponse(
+        content="Teacher response",
+        input_tokens=3,
+        output_tokens=4,
+        time_taken_in_ms=5,
+    )
+
+    with (
+        patch("resources.model_resource.model_resource.verify_and_auth_api_key"),
+        patch.object(ModelResource, "get_model_provider", return_value=provider),
+        patch(
+            "resources.model_resource.model_resource.truncate_input_to_max_tokens",
+            return_value="USER MESSAGE",
+        ) as truncate,
+    ):
+        resource = ModelResource(
+            "teacher_model",
+            ModelResourceConfig(
+                model="google/gemini-3.6-flash", max_input_tokens=1_048_576
+            ),
+        )
+        resource.run(SimpleNamespace(memory="USER MESSAGE"))
+
+    assert truncate.call_args.kwargs["max_input_tokens"] == 943_718
+
+
 def test_model_resource_forwards_high_thinking_level():
     provider = MagicMock()
     provider.make_request.return_value = ModelResponse(

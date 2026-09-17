@@ -28,6 +28,7 @@ HALLUCINATION_STRINGS = [
     "----------</assistant",
     "----------Message from agent",
 ]
+DIRECT_GOOGLE_INPUT_SAFETY_RATIO = 0.9
 
 
 @dataclass
@@ -266,14 +267,19 @@ class ModelResource(RunnableBaseResource):
                 prev=prev_action_message,
             )
 
+        system_prompt = getattr(input_message, "system_prompt", None)
+        truncation_limit = self.max_input_tokens
+        if not self.helm and self.model.startswith("google/"):
+            truncation_limit = max(
+                1, int(self.max_input_tokens * DIRECT_GOOGLE_INPUT_SAFETY_RATIO)
+            )
         model_input = truncate_input_to_max_tokens(
-            max_input_tokens=self.max_input_tokens,
+            max_input_tokens=truncation_limit,
             model_input=model_input,
             model=self.model,
             use_helm=self.helm,
             preserve_oldest=self.preserve_oldest_input,
         )
-        system_prompt = getattr(input_message, "system_prompt", None)
         if system_prompt is not None:
             if self.helm or not self.model.startswith("google/"):
                 raise ValueError(
