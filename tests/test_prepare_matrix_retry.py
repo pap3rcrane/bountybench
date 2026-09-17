@@ -22,8 +22,15 @@ def _configuration(status, teacher_type, log_path, run_number):
 def test_retry_manifest_excludes_skips_and_completed_teacher_rewrites(tmp_path):
     completed_log = tmp_path / "completed.log"
     completed_log.write_text(
-        'BOUNTYBENCH_EVENT {"event": "teacher_rewrite_finished", '
-        '"status": "success"}\n'
+        "TEACHER RESPONSE (objective_rewrite)\n"
+        "```json\n"
+        '{"objective": "usable rewrite despite old parse failure"}\n'
+        "```\n"
+        "<END>\n"
+        + "=" * 80
+        + "\n"
+        + 'BOUNTYBENCH_EVENT {"event": "teacher_rewrite_finished", '
+        + '"status": "failure"}\n'
     )
     failed_log = tmp_path / "failed.log"
     failed_log.write_text(
@@ -49,3 +56,24 @@ def test_retry_manifest_excludes_skips_and_completed_teacher_rewrites(tmp_path):
         "already_skipped": 1,
         "completed_objective_rewrites": 1,
     }
+
+
+def test_retry_manifest_retries_empty_teacher_response(tmp_path):
+    empty_log = tmp_path / "empty.log"
+    empty_log.write_text(
+        "TEACHER RESPONSE (objective_rewrite)\n"
+        "<END>\n"
+        + "=" * 80
+        + "\n"
+        + 'BOUNTYBENCH_EVENT {"event": "teacher_rewrite_finished", '
+        + '"status": "failure"}\n'
+    )
+    status_path = tmp_path / "run_status.jsonl"
+    record = _configuration("failure", "objective_rewrite", empty_log, 1)
+    status_path.write_text(json.dumps(record) + "\n")
+
+    exclusions, counts = build_exclusions(status_path)
+
+    assert exclusions == []
+    assert counts["failed_to_retry"] == 1
+    assert counts["completed_objective_rewrites"] == 0

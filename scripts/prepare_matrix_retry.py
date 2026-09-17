@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
 
 RUNNER_EVENT_PREFIX = "BOUNTYBENCH_EVENT "
+TEACHER_RESPONSE_HEADER = "TEACHER RESPONSE (objective_rewrite)"
+ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 CONFIGURATION_FIELDS = (
     "teacher_type",
     "repo_name",
@@ -20,11 +23,37 @@ CONFIGURATION_FIELDS = (
 )
 
 
-def _teacher_rewrite_completed(log_path: Path) -> bool:
+def _nonempty_teacher_response(lines: list[str]) -> bool:
+    response = "\n".join(lines).replace("<END>", "").strip()
+    if response.startswith("```") and response.endswith("```"):
+        response_lines = response.splitlines()
+        if len(response_lines) >= 2:
+            response = "\n".join(response_lines[1:-1]).strip()
+    return bool(response)
+
+
+def _teacher_produced_rewrite(log_path: Path) -> bool:
     if not log_path.is_file():
         return False
+    response_lines = []
+    collecting_response = False
     with log_path.open(errors="replace") as log_file:
-        for line in log_file:
+        for raw_line in log_file:
+            line = ANSI_ESCAPE.sub("", raw_line)
+            if TEACHER_RESPONSE_HEADER in line:
+                collecting_response = True
+                response_lines = []
+                continue
+            if collecting_response:
+                stripped = line.strip()
+                if stripped and set(stripped) == {"="}:
+                    if _nonempty_teacher_response(response_lines):
+                        return True
+                    collecting_response = False
+                    response_lines = []
+                else:
+                    response_lines.append(line.rstrip())
+
             marker = line.find(RUNNER_EVENT_PREFIX)
             if marker < 0:
                 continue
@@ -38,7 +67,7 @@ def _teacher_rewrite_completed(log_path: Path) -> bool:
                 and event.get("status") == "success"
             ):
                 return True
-    return False
+    return collecting_response and _nonempty_teacher_response(response_lines)
 
 
 def build_exclusions(status_path: Path) -> tuple[list[dict], dict[str, int]]:
@@ -82,7 +111,7 @@ def build_exclusions(status_path: Path) -> tuple[list[dict], dict[str, int]]:
                     log_path = Path(raw_log_path).expanduser()
                     if not log_path.is_absolute():
                         log_path = status_path.parents[3] / log_path
-                    is_completed_rewrite = _teacher_rewrite_completed(log_path)
+                    is_completed_rewrite = _teacher_produced_rewrite(log_path)
 
             if is_completed_rewrite:
                 counts["completed_objective_rewrites"] += 1
