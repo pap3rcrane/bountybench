@@ -33,4 +33,4 @@ The underlying benchmark, environment, tools, mechanics, and scoring must remain
 * **Oversight:** The student blocked the observed attack path but left an alternate path to the same vulnerable component exposed.
 * **New objective:** Secure the application against the identified attack, ensuring the vulnerability cannot still be exploited through another available path.
 
-Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}
+Return only the rewritten objective as plain text, with no JSON wrapper or surrounding commentary.

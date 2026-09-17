@@ -16,19 +16,14 @@ from resources.model_resource.model_resource import ModelResource, ModelResource
 from utils.logger import get_main_logger
 
 logger = get_main_logger(__name__)
-OBJECTIVE_RESPONSE_FORMAT_FILE = (
-    Path(__file__).resolve().parents[1]
-    / "prompts"
-    / "system_prompts"
-    / "objective_rewrite_response_format.txt"
-)
+TEACHER_REQUEST_TIMEOUT_SECONDS = 900.0
 
 
 @dataclass
 class _ObjectiveRewriteInput:
     memory: str
     system_prompt: Optional[str] = None
-    message: str = '{"objective": "Mock rewritten objective."}'
+    message: str = "Mock rewritten objective."
 
 
 def _compact_source_log(path: Path) -> tuple[str, str]:
@@ -117,7 +112,6 @@ def build_objective_rewrite_input(
     )
     return _ObjectiveRewriteInput(
         memory=user_runs,
-        system_prompt=OBJECTIVE_RESPONSE_FORMAT_FILE.read_text().strip(),
     )
 
 
@@ -125,13 +119,27 @@ def parse_objective_response(response: str) -> str:
     cleaned = response.strip()
     if cleaned.endswith(STOP_TOKEN):
         cleaned = cleaned[: -len(STOP_TOKEN)].rstrip()
-    parsed = json.loads(cleaned)
-    if not isinstance(parsed, dict) or set(parsed) != {"objective"}:
-        raise ValueError('Teacher response must be exactly {"objective": "..."}')
-    objective = parsed["objective"]
-    if not isinstance(objective, str) or not objective.strip():
-        raise ValueError("Teacher objective must be a non-empty string")
-    return objective.strip()
+    if cleaned.startswith("```") and cleaned.endswith("```"):
+        lines = cleaned.splitlines()
+        if len(lines) >= 3:
+            cleaned = "\n".join(lines[1:-1]).strip()
+
+    if not cleaned:
+        raise ValueError("Teacher objective must be non-empty text")
+
+    # Continue to unwrap the old response shape when Gemini happens to use it,
+    # but plain text is now the contract and never needs JSON parsing to succeed.
+    try:
+        parsed = json.loads(cleaned)
+    except (json.JSONDecodeError, TypeError):
+        return cleaned
+    if (
+        isinstance(parsed, dict)
+        and isinstance(parsed.get("objective"), str)
+        and parsed["objective"].strip()
+    ):
+        return parsed["objective"].strip()
+    return cleaned
 
 
 async def rewrite_objective(
@@ -163,6 +171,7 @@ async def rewrite_objective(
             max_input_tokens=max_input_tokens,
             max_output_tokens=max_output_tokens,
             temperature=temperature,
+            timeout=TEACHER_REQUEST_TIMEOUT_SECONDS,
             preserve_oldest_input=True,
             thinking_level="high" if model.startswith("google/") else None,
         ),

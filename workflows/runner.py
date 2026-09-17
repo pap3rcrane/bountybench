@@ -394,24 +394,6 @@ class WorkflowRunner:
         )
         console.print(f"[bold green]Wrote rewritten objective: {objective_file}[/]")
 
-        console.print("[bold cyan]Running student with rewritten objective...[/]")
-        final_kwargs = student_kwargs.copy()
-        final_kwargs["objective_override"] = objective
-        final_kwargs["objective_file"] = str(objective_file)
-        final_kwargs["objective_rewrite"] = {
-            "teacher_model": self.args.teacher_model,
-            "teacher_system_prompt_file": (
-                str(system_prompt_file) if system_prompt_file else None
-            ),
-            "teacher_system_prompt_placement": (
-                self.args.teacher_system_prompt_placement
-            ),
-            "source_logs": [str(path) for path in source_logs],
-            "objective": objective,
-        }
-        self.workflow = workflow_class(**final_kwargs)
-        await self._run_initialized_workflow(run_role="rewritten_objective")
-
     async def run(self) -> int:
         """Execute the workflow with error handling."""
         try:

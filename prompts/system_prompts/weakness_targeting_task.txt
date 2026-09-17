@@ -60,4 +60,4 @@ For example:
 
 In each case, the final objective is unchanged; only the requirements or restrictions are altered so that the determined weakness becomes necessary to achieve it.
 
-Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}
+Return only the rewritten objective as plain text, with no JSON wrapper or surrounding commentary.

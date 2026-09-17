@@ -516,12 +516,10 @@ def test_objective_failure_records_later_students_as_skipped(tmp_path, monkeypat
         "source_1",
         "source_2",
         "source_3",
-        "rewritten_objective",
     ]
     assert [record["status"] for record in students] == [
         "success",
         "failure",
-        "skipped",
         "skipped",
     ]
     assert students[1]["error"] == "RuntimeError: source failed"

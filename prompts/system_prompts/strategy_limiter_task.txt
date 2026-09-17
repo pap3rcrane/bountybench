@@ -14,4 +14,4 @@ Examples:
 
 The new objective should make the habitual strategy tempting but unavailable, while preserving the same final objective.
 
-Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}
+Return only the rewritten objective as plain text, with no JSON wrapper or surrounding commentary.

@@ -126,7 +126,7 @@ def test_prints_none_baseline_for_selected_prompt_mode():
     assert "As a student works through a task" not in contents
 
 
-def test_prints_objective_rewrite_none_baseline_with_response_format():
+def test_prints_objective_rewrite_none_baseline_without_system_instruction():
     output = _run_script(
         "--workflow",
         "patch_workflow",
@@ -142,10 +142,7 @@ def test_prints_objective_rewrite_none_baseline_with_response_format():
     contents = request["gemini_api"]["generate_content"]["contents"]
     assert request["teacher_mode"] == "objective_rewrite"
     assert request["system_prompt_name"] is None
-    assert request["gemini_api"]["GenerativeModel"]["system_instruction"] == (
-        PROJECT_ROOT
-        / "prompts/system_prompts/objective_rewrite_response_format.txt"
-    ).read_text().strip()
+    assert request["gemini_api"]["GenerativeModel"]["system_instruction"] is None
     assert contents.count("ORIGINAL BENCHMARK TASK:") == 3
     assert contents.count("AVAILABLE TRACE (oldest to newest):") == 3
 

@@ -25,8 +25,8 @@ from workflows.teacher_modes import (
 )
 
 OBJECTIVE_RESPONSE_FORMAT = (
-    "Return exactly one valid JSON object with this schema and no surrounding text: "
-    '{"objective": "..."}'
+    "Return only the rewritten objective as plain text, with no JSON wrapper or "
+    "surrounding commentary."
 )
 
 
@@ -84,14 +84,15 @@ def test_objective_replaces_only_workflow_description():
     assert "exploit and patch" in combined
 
 
-def test_objective_response_requires_exact_json_shape():
+def test_objective_response_accepts_plain_text_and_legacy_json():
+    assert parse_objective_response("Improve this.\n<END>") == "Improve this."
     assert parse_objective_response('{"objective": "Improve this."}\n<END>') == (
         "Improve this."
     )
-    with pytest.raises(json.JSONDecodeError):
-        parse_objective_response('```json\n{"objective": "bad"}\n```')
-    with pytest.raises(ValueError, match="exactly"):
-        parse_objective_response('{"objective": "x", "analysis": "extra"}')
+    assert parse_objective_response("```text\nImprove this.\n```") == "Improve this."
+    assert parse_objective_response("not valid JSON") == "not valid JSON"
+    with pytest.raises(ValueError, match="non-empty"):
+        parse_objective_response("  \n<END>")
 
 
 def test_objective_input_uses_three_logs_and_removes_old_teacher_turns(tmp_path):
@@ -152,7 +153,7 @@ def test_objective_none_placement_needs_no_system_prompt_file(tmp_path):
         None, TeacherSystemPromptPlacement.NONE, logs
     )
 
-    assert model_input.system_prompt == OBJECTIVE_RESPONSE_FORMAT
+    assert model_input.system_prompt is None
     assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
     assert model_input.memory.count("AVAILABLE TRACE (oldest to newest):") == 3
 
@@ -169,7 +170,7 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
     with patch("workflows.teacher_modes.ModelResource") as model_resource:
         model_resource.return_value.run.return_value = ActionMessage(
             resource_id="teacher_model",
-            message='{"objective": "Better objective."}',
+            message="Better objective.",
         )
         objective = asyncio.run(
             rewrite_objective(
@@ -189,6 +190,7 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
     assert objective == "Better objective."
     assert model_config.preserve_oldest_input is True
     assert model_config.thinking_level == "high"
+    assert model_config.timeout == 900.0
     assert model_input.system_prompt.startswith("ACTUAL SYSTEM PROMPT\n\n")
     assert model_input.system_prompt.count("ORIGINAL BENCHMARK TASK:") == 3
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory
@@ -204,7 +206,7 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
         "oversight_task",
     ],
 )
-def test_objective_task_prompts_end_with_response_format(prompt_name):
+def test_objective_task_prompts_end_with_plain_text_response_format(prompt_name):
     prompt_path = (
         Path(__file__).resolve().parents[2]
         / "prompts"
@@ -297,7 +299,7 @@ def test_student_kwargs_remove_all_teacher_behavior():
     ) == {"model": "student"}
 
 
-def test_generated_sources_are_followed_by_teacher_free_objective_run(tmp_path):
+def test_generated_sources_are_followed_by_teacher_objective_only(tmp_path):
     prompt = tmp_path / "teacher.txt"
     prompt.write_text("Rewrite the objective.")
     objective_file = tmp_path / "objective.json"
@@ -354,13 +356,10 @@ def test_generated_sources_are_followed_by_teacher_free_objective_run(tmp_path):
     ):
         asyncio.run(runner._run_objective_rewrite())
 
-    assert len(FakeWorkflow.instances) == 4
+    assert len(FakeWorkflow.instances) == 3
     assert all("teacher_mode" not in run.kwargs for run in FakeWorkflow.instances)
     assert all(
-        "objective_override" not in run.kwargs for run in FakeWorkflow.instances[:3]
-    )
-    assert FakeWorkflow.instances[3].kwargs["objective_override"] == (
-        "Rewritten objective"
+        "objective_override" not in run.kwargs for run in FakeWorkflow.instances
     )
     assert len(rewrite.await_args.kwargs["source_logs"]) == 3
     assert rewrite.await_args.kwargs["system_prompt_placement"] is (

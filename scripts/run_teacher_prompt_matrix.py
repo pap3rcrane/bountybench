@@ -57,7 +57,6 @@ OBJECTIVE_RUN_ROLES = (
     "source_1",
     "source_2",
     "source_3",
-    "rewritten_objective",
 )
 
 

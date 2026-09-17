@@ -14,6 +14,7 @@ logger = get_main_logger(__name__)
 
 RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_BACKOFF_SECONDS = 60
+TRANSIENT_STATUS_CODES = {429, 503}
 
 
 def _valid_token_count(value) -> Optional[int]:
@@ -53,13 +54,17 @@ class GoogleModels(ModelProvider):
                 except (TypeError, ValueError):
                     if status == "RESOURCE_EXHAUSTED":
                         return 429
+                    if status == "UNAVAILABLE":
+                        return 503
 
         error_text = str(error)
         if "RESOURCE_EXHAUSTED" in error_text or "429" in error_text:
             return 429
+        if "UNAVAILABLE" in error_text or "503" in error_text:
+            return 503
         return None
 
-    def _generate_content_with_rate_limit_retry(self, **request_kwargs):
+    def _generate_content_with_transient_retry(self, **request_kwargs):
         for retry_number in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
                 return self.client.models.generate_content(**request_kwargs)
@@ -67,11 +72,15 @@ class GoogleModels(ModelProvider):
                 status_code = self._status_code(error)
                 if status_code is not None:
                     error.status_code = status_code
-                if status_code != 429 or retry_number == RATE_LIMIT_MAX_RETRIES:
+                if (
+                    status_code not in TRANSIENT_STATUS_CODES
+                    or retry_number == RATE_LIMIT_MAX_RETRIES
+                ):
                     raise
 
                 logger.warning(
-                    "Gemini rate limit reached. Retrying %s/%s in %s seconds.",
+                    "Gemini returned transient HTTP %s. Retrying %s/%s in %s seconds.",
+                    status_code,
                     retry_number + 1,
                     RATE_LIMIT_MAX_RETRIES,
                     RATE_LIMIT_BACKOFF_SECONDS,
@@ -96,7 +105,7 @@ class GoogleModels(ModelProvider):
         status_code = None
 
         try:
-            response = self._generate_content_with_rate_limit_retry(
+            response = self._generate_content_with_transient_retry(
                 model=model_id,
                 contents=message,
                 config=types.GenerateContentConfig(

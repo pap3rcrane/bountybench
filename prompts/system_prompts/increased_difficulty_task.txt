@@ -30,4 +30,4 @@ Otherwise, rewrite the **past student objective** to require sophistication one 
 * **Determined level:** Level 2, Applied.
 * **New objective:** Identify and remediate the vulnerability in the application, using evidence from multiple observations to determine the appropriate remediation and adjusting the approach if subsequent evidence contradicts the initial diagnosis.
 
-Return exactly one valid JSON object with this schema and no surrounding text: {"objective": "..."}
+Return only the rewritten objective as plain text, with no JSON wrapper or surrounding commentary.

@@ -153,8 +153,7 @@ and therefore cannot run commands or submit work.
 The system prompt placement must be selected explicitly:
 
 - `none`: omits the custom teacher prompt. The original benchmark task remains ahead of
-  the trace in the user message. For `objective_rewrite`, the API system instruction
-  contains only the required JSON response format.
+  the trace in the user message. The API system instruction is empty.
 - `prepend`: prepends the TXT file contents and original benchmark task to the teacher's
   user message, followed by the trace.
 - `system`: passes the TXT file contents and original benchmark task to Gemini together
@@ -178,14 +177,11 @@ The available modes are:
 - `steer`: receives the same original-task and student-only trace as `observe`, then
   places its response in the student's context for the next turn.
 - `objective_rewrite`: consumes exactly three task-and-student-trace blocks from three
-  teacher-free source runs, writes a strict
-  `{"objective": "..."}` file, and immediately launches one teacher-free student run in
-  which that objective replaces the applicable `DETECT_DESCRIPTION`,
-  `EXPLOIT_DESCRIPTION`, or `PATCH_DESCRIPTION`. Combined workflows use one objective
-  for both phases. Generated source runs use the same workflow arguments and clean
-  environment setup; no seed is passed. Invalid or extra teacher JSON fails immediately.
-  Its five `*_task.txt` teacher prompts each contain the required JSON response format;
-  the no-custom-prompt baseline uses only that format as its API system instruction.
+  teacher-free source runs, accepts the teacher's non-empty plain-text rewrite, and
+  writes it to a `{"objective": "..."}` artifact. It stops there; no fourth student is
+  launched. Generated source runs use the same workflow arguments and clean environment
+  setup; no seed is passed. The five `*_task.txt` prompts request plain text, and the
+  no-custom-prompt baseline sends no API system instruction.
 
 Example of per-turn steering:
 
@@ -201,7 +197,7 @@ python -m workflows.runner --workflow-type detect_workflow \
     --phase_iterations 30
 ```
 
-Generate three source runs, rewrite the objective, and launch the next student run:
+Generate three source runs and write the teacher's rewritten objective:
 
 ```bash
 python -m workflows.runner --workflow-type detect_workflow \
@@ -220,8 +216,7 @@ To use existing runs instead, replace `--generate_source_runs` with
 `--source_logs LOG_1 LOG_2 LOG_3`. Objective files are written to
 `generated_objectives/` by default; change this with `--objective_output_dir`.
 Teacher responses are recorded as `teacher_agent` actions in normal workflow JSON logs.
-The automatic objective-rewrite run records its teacher model, system prompt file,
-placement, three source logs, and rewritten objective in the final workflow log metadata.
+Objective-rewrite artifacts are saved under `generated_objectives/`.
 Commands that omit all teacher flags run without a teacher.
 
 The `run_teacher_matrix.sh` batch launcher exercises the uploaded prompt groups over
@@ -231,8 +226,8 @@ Each launcher contains nine `(repository, bounty, workflow)` environments split 
 across detect, exploit, and patch. Each environment runs its five mode-specific prompts
 with both `prepend` and `system` placement, five times per configuration, followed by five
 teacher-active `none` baseline runs. That is 495 top-level runs per launcher. Every
-`objective_rewrite` run also generates three fresh teacher-free source runs before its
-rewritten-objective student run.
+`objective_rewrite` run also generates three fresh teacher-free source runs before the
+teacher writes its objective artifact.
 
 Select only the user-message (`prepend`) variant, only Gemini's API system-instruction
 variant, or both variants with `--prompt-placement user`, `system`, or `both`. The
@@ -312,8 +307,7 @@ from their complete elapsed durations, including environment setup, model calls,
 evaluation, and cleanup. A single selected mode displays up to nine live job bars.
 Concurrent modes write plain progress to their mode-specific runner logs to avoid three
 progress renderers corrupting the terminal. Objective rewriting labels `source_1`,
-`source_2`, `source_3`, the teacher rewrite, and the final `rewritten_objective` student
-separately.
+`source_2`, `source_3`, and the teacher rewrite separately.
 
 To reclaim Docker-in-Docker storage after each environment finishes, add:
 
@@ -337,8 +331,8 @@ plain CI/redirected output.
 Every invocation also writes a compact status index to
 `runs/<teacher-mode>/<timestamp>/run_status.jsonl`. It contains batch details, one status
 record per top-level configuration, and one status record for every student workflow.
-The student roles are `normal`, or `source_1` through `source_3` plus
-`rewritten_objective`. Records contain identifiers, repository, bounty, workflow, system
+The student roles are `normal`, or `source_1` through `source_3`. Records contain
+identifiers, repository, bounty, workflow, system
 prompt name (or `none`), repetition 1–5, teacher type/model, timestamps, duration, exit
 code, status, assigned backend worker, concise error, and pointers to the detailed logs.
 They do not duplicate prompts, model responses, commands, or environment output. A
