@@ -217,6 +217,9 @@ def test_worker_entrypoint_uses_optional_mirror_without_architecture_specific_he
     assert '--registry-mirror "$DOCKER_REGISTRY_MIRROR"' in entrypoint
     assert '--insecure-registry "$MIRROR_HOST"' in entrypoint
     assert "docker login --username" in entrypoint
+    assert '"${BOUNTY_AGENT_IMAGE:-}" == *.pkg.dev/*' in entrypoint
+    assert "metadata.google.internal" in entrypoint
+    assert "--username oauth2accesstoken" in entrypoint
     assert "docker-credential-pass" not in entrypoint
     assert "linux-arm64" not in entrypoint
 

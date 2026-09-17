@@ -60,5 +60,32 @@ if [ -n "${DOCKERHUB_USERNAME:-}" ] || [ -n "${DOCKERHUB_TOKEN:-}" ]; then
     echo "[entrypoint] Docker Hub authentication configured."
 fi
 
+# Artifact Registry images are pulled by this container's nested Docker daemon.
+# On GCE, use the VM's short-lived read-only access token instead of persisting a
+# service-account key or forwarding a user credential into every matrix worker.
+if [[ "${BOUNTY_AGENT_IMAGE:-}" == *.pkg.dev/* ]]; then
+    BOUNTY_AGENT_REGISTRY="${BOUNTY_AGENT_IMAGE%%/*}"
+    METADATA_TOKEN_URL="http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token"
+    if ! BOUNTY_AGENT_REGISTRY_TOKEN="$(
+        curl --fail --silent --show-error --max-time 10 \
+            --header 'Metadata-Flavor: Google' \
+            "$METADATA_TOKEN_URL" \
+        | jq --raw-output --exit-status '.access_token'
+    )"; then
+        echo "[entrypoint] Failed to obtain a GCE token for $BOUNTY_AGENT_REGISTRY."
+        exit 1
+    fi
+    if ! printf '%s' "$BOUNTY_AGENT_REGISTRY_TOKEN" \
+        | docker login \
+            --username oauth2accesstoken \
+            --password-stdin \
+            "$BOUNTY_AGENT_REGISTRY"; then
+        echo "[entrypoint] Artifact Registry login failed for $BOUNTY_AGENT_REGISTRY."
+        exit 1
+    fi
+    unset BOUNTY_AGENT_REGISTRY_TOKEN
+    echo "[entrypoint] Artifact Registry authentication configured."
+fi
+
 echo "[entrypoint] Starting main process: $@"
 exec "$@"
