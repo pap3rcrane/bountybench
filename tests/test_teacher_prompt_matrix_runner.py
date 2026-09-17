@@ -16,6 +16,7 @@ from scripts.run_teacher_prompt_matrix import (
     create_parser,
     load_successful_configuration_keys,
     parse_runner_event,
+    parse_runner_events,
 )
 
 PROMPT_FILE = "prompts/system_prompts/optimizer.txt"
@@ -219,6 +220,48 @@ def test_runner_event_parser_ignores_normal_output():
         "timestamp": "2026-09-14T12:00:00-04:00",
         "run_role": "normal",
     }
+
+
+def test_runner_event_parser_accepts_concatenated_output():
+    event = _event("student_run_finished", run_role="normal", status="success")
+
+    assert parse_runner_event(f"shell output without newline{event}") == {
+        "event": "student_run_finished",
+        "timestamp": "2026-09-14T12:00:00-04:00",
+        "run_role": "normal",
+        "status": "success",
+    }
+
+
+def test_runner_event_parser_ignores_suffix_and_finds_multiple_events():
+    started = _event("student_run_started", run_role="normal")
+    finished = _event("student_run_finished", run_role="normal", status="success")
+
+    assert parse_runner_events(f"prefix{started}suffix{finished}trailing output") == [
+        {
+            "event": "student_run_started",
+            "timestamp": "2026-09-14T12:00:00-04:00",
+            "run_role": "normal",
+        },
+        {
+            "event": "student_run_finished",
+            "timestamp": "2026-09-14T12:00:00-04:00",
+            "run_role": "normal",
+            "status": "success",
+        },
+    ]
+
+
+def test_runner_event_parser_skips_malformed_marker_before_valid_event():
+    valid = _event("student_run_started", run_role="normal")
+
+    assert parse_runner_events(f"BOUNTYBENCH_EVENT not-json {valid}") == [
+        {
+            "event": "student_run_started",
+            "timestamp": "2026-09-14T12:00:00-04:00",
+            "run_role": "normal",
+        }
+    ]
 
 
 def test_skip_source_uses_only_final_successful_configurations(tmp_path):

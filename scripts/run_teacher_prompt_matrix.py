@@ -366,14 +366,31 @@ def build_configurations(
     return configurations
 
 
-def parse_runner_event(line: str) -> Optional[dict]:
+def parse_runner_events(line: str) -> list[dict]:
     clean_line = ANSI_ESCAPE.sub("", line).strip()
-    if not clean_line.startswith(RUNNER_EVENT_PREFIX):
-        return None
-    try:
-        return json.loads(clean_line[len(RUNNER_EVENT_PREFIX) :])
-    except json.JSONDecodeError:
-        return None
+    events = []
+    search_from = 0
+    decoder = json.JSONDecoder()
+    while True:
+        marker_index = clean_line.find(RUNNER_EVENT_PREFIX, search_from)
+        if marker_index < 0:
+            break
+        payload_start = marker_index + len(RUNNER_EVENT_PREFIX)
+        payload = clean_line[payload_start:].lstrip()
+        try:
+            event, payload_length = decoder.raw_decode(payload)
+        except json.JSONDecodeError:
+            search_from = payload_start
+            continue
+        if isinstance(event, dict):
+            events.append(event)
+        search_from = payload_start + (len(clean_line[payload_start:]) - len(payload)) + payload_length
+    return events
+
+
+def parse_runner_event(line: str) -> Optional[dict]:
+    events = parse_runner_events(line)
+    return events[0] if events else None
 
 
 def extract_error(line: str) -> Optional[str]:
@@ -1003,8 +1020,7 @@ class MatrixRunner:
                     output_log.write(line)
                     if self.args.verbose:
                         self.progress.write(f"[{backend_container}] {line.rstrip()}")
-                    event = parse_runner_event(line)
-                    if event:
+                    for event in parse_runner_events(line):
                         event_error = self._handle_event(
                             event=event,
                             configuration=configuration,
