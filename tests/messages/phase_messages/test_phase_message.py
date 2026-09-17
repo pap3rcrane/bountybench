@@ -229,6 +229,41 @@ def test_calculate_total_usages(mocker):
     }
 
 
+def test_calculate_total_usages_ignores_malformed_values_independently():
+    phase_message = PhaseMessage("phase_1")
+    agent_message = MagicMock(spec=AgentMessage)
+    agent_message.iteration_time_ms = float("inf")
+
+    action_with_partial_usage = MagicMock(spec=ActionMessage)
+    action_with_partial_usage._additional_metadata = {
+        "input_tokens": 12,
+        "output_tokens": None,
+    }
+    action_with_invalid_usage = MagicMock(spec=ActionMessage)
+    action_with_invalid_usage._additional_metadata = (
+        {
+            "input_tokens": "13",
+            "output_tokens": -4,
+            "time_taken_in_ms": float("nan"),
+        },
+    )
+    action_without_metadata = MagicMock(spec=ActionMessage)
+    action_without_metadata._additional_metadata = None
+    agent_message._action_messages = [
+        action_with_partial_usage,
+        action_with_invalid_usage,
+        action_without_metadata,
+    ]
+    phase_message._agent_messages = [agent_message]
+
+    assert phase_message.calculate_total_usages() == {
+        INPUT_TOKEN: 12,
+        OUTPUT_TOKEN: 0,
+        QUERY_TIME_TAKEN_IN_MS: 0,
+        TOTAL_ITERATION_TIME_MS: 0,
+    }
+
+
 def test_to_log_dict(mocker):
     """
     Test the to_log_dict method for PhaseMessage.

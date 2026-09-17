@@ -73,6 +73,56 @@ def test_gemini_prepend_transport_does_not_set_a_system_instruction():
     assert config.system_instruction is None
 
 
+def test_gemini_normalizes_missing_text_and_usage_counts():
+    response = MagicMock()
+    response.text = None
+    response.usage_metadata = None
+    client = MagicMock()
+    client.models.generate_content.return_value = response
+    client.models.count_tokens.return_value.total_tokens = None
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+        )
+
+    assert result.content == ""
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
+def test_gemini_keeps_response_when_fallback_token_counting_fails():
+    response = MagicMock()
+    response.text = "Teacher response"
+    response.usage_metadata = None
+    client = MagicMock()
+    client.models.generate_content.return_value = response
+    client.models.count_tokens.side_effect = RuntimeError("counting unavailable")
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+        )
+
+    assert result.content == "Teacher response"
+    assert result.input_tokens == 0
+    assert result.output_tokens == 0
+
+
 def test_gemini_high_thinking_is_passed_in_generation_config():
     response = MagicMock()
     response.text = "Teacher response"

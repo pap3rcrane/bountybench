@@ -42,6 +42,36 @@ def test_get_total_usage():
     assert workflow_message.usage == usage
 
 
+def test_get_total_usage_ignores_missing_and_malformed_phase_values():
+    valid_phase = MagicMock(spec=PhaseMessage)
+    valid_phase.usage = {
+        INPUT_TOKEN: 10,
+        OUTPUT_TOKEN: None,
+        QUERY_TIME_TAKEN_IN_MS: 20.5,
+    }
+    malformed_phase = MagicMock(spec=PhaseMessage)
+    malformed_phase.usage = {
+        INPUT_TOKEN: "30",
+        OUTPUT_TOKEN: float("nan"),
+        QUERY_TIME_TAKEN_IN_MS: -1,
+    }
+    missing_usage_phase = MagicMock(spec=PhaseMessage)
+    missing_usage_phase.usage = None
+
+    workflow_message = WorkflowMessage("test_workflow")
+    workflow_message._phase_messages = [
+        valid_phase,
+        malformed_phase,
+        missing_usage_phase,
+    ]
+
+    assert workflow_message.get_total_usage() == {
+        "total_input_tokens": 10,
+        "total_output_tokens": 0,
+        "total_query_time_taken_in_ms": 20.5,
+    }
+
+
 def test_to_log_dict(mocker):
     """
     Test that to_log_dict includes workflow usage information.

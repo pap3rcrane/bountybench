@@ -1,3 +1,5 @@
+import math
+from numbers import Integral, Real
 from typing import List, Optional
 
 from messages.agent_messages.agent_message import AgentMessage
@@ -9,6 +11,21 @@ QUERY_TIME_TAKEN_IN_MS = "query_time_taken_in_ms"
 INPUT_TOKEN = "input_token"
 OUTPUT_TOKEN = "output_token"
 TOTAL_ITERATION_TIME_MS = "total_iteration_time_ms"
+
+
+def normalize_usage_value(value):
+    """Return a usable non-negative metric, or zero for malformed metadata."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, Integral):
+        return value if value >= 0 else 0
+    if not isinstance(value, Real):
+        return 0
+    try:
+        is_valid = math.isfinite(value) and value >= 0
+    except (OverflowError, TypeError, ValueError):
+        return 0
+    return value if is_valid else 0
 
 
 class PhaseMessage(Message):
@@ -137,24 +154,28 @@ class PhaseMessage(Message):
         total_iteration_time_ms = 0
 
         for agent_message in self._agent_messages:
-            total_iteration_time_ms += (
-                agent_message.iteration_time_ms
-                if agent_message.iteration_time_ms
-                else 0
+            total_iteration_time_ms += normalize_usage_value(
+                getattr(agent_message, "iteration_time_ms", None)
             )
-            for action_message in agent_message._action_messages:
-                metadata = action_message._additional_metadata
+            for action_message in (
+                getattr(agent_message, "_action_messages", None) or []
+            ):
+                metadata = getattr(action_message, "_additional_metadata", None)
                 if isinstance(metadata, tuple) and len(metadata) > 0:
                     metadata = metadata[0]  # Extract the dictionary from the tuple
-                if isinstance(metadata, dict) and metadata:
-                    # not all metadatas have token information
-                    if all(
-                        key in metadata
-                        for key in ["input_tokens", "output_tokens", "time_taken_in_ms"]
-                    ):
-                        total_input_tokens += metadata["input_tokens"]
-                        total_output_tokens += metadata["output_tokens"]
-                        total_query_time_taken_in_ms += metadata["time_taken_in_ms"]
+                if isinstance(metadata, dict):
+                    # Providers can omit individual usage fields or return null for
+                    # them. Preserve every valid field without letting malformed
+                    # accounting metadata prevent the workflow log from being saved.
+                    total_input_tokens += normalize_usage_value(
+                        metadata.get("input_tokens")
+                    )
+                    total_output_tokens += normalize_usage_value(
+                        metadata.get("output_tokens")
+                    )
+                    total_query_time_taken_in_ms += normalize_usage_value(
+                        metadata.get("time_taken_in_ms")
+                    )
 
         self.usage = {
             INPUT_TOKEN: total_input_tokens,

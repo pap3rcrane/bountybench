@@ -1,4 +1,5 @@
 from datetime import datetime
+from numbers import Integral
 from time import sleep
 from typing import List, Optional
 
@@ -9,11 +10,16 @@ from resources.model_resource.model_provider import ModelProvider
 from resources.model_resource.model_response import ModelResponse
 from utils.logger import get_main_logger
 
-
 logger = get_main_logger(__name__)
 
 RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_BACKOFF_SECONDS = 60
+
+
+def _valid_token_count(value) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
+        return None
+    return int(value)
 
 
 class GoogleModels(ModelProvider):
@@ -113,14 +119,38 @@ class GoogleModels(ModelProvider):
 
             end_time = datetime.now()
             response_request_duration = (end_time - start_time).total_seconds() * 1000
-            input_tokens = self.client.models.count_tokens(
-                model=model_id, contents=message
-            ).total_tokens
+            usage_metadata = getattr(response, "usage_metadata", None)
+            input_tokens = _valid_token_count(
+                getattr(usage_metadata, "prompt_token_count", None)
+            )
+            if input_tokens is None:
+                try:
+                    token_count = self.client.models.count_tokens(
+                        model=model_id, contents=message
+                    )
+                    input_tokens = _valid_token_count(
+                        getattr(token_count, "total_tokens", None)
+                    )
+                except Exception as token_count_error:
+                    logger.warning(
+                        "Gemini input token accounting failed; recording zero: %s",
+                        token_count_error,
+                    )
+            input_tokens = input_tokens or 0
+            output_tokens = (
+                _valid_token_count(
+                    getattr(usage_metadata, "candidates_token_count", None)
+                )
+                or 0
+            )
+            response_text = getattr(response, "text", None)
+            if not isinstance(response_text, str):
+                response_text = ""
 
             return ModelResponse(
-                content=response.text,
+                content=response_text,
                 input_tokens=input_tokens,
-                output_tokens=response.usage_metadata.candidates_token_count,
+                output_tokens=output_tokens,
                 time_taken_in_ms=response_request_duration,
                 status_code=status_code,
             )

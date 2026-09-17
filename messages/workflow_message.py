@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from messages.message import Message
-from messages.phase_messages.phase_message import PhaseMessage
+from messages.phase_messages.phase_message import PhaseMessage, normalize_usage_value
 from utils.git_utils import git_get_codebase_version
 from utils.logger import (
     FULL_LOG_DIR,
@@ -131,15 +131,20 @@ class WorkflowMessage(Message):
         self._full_log_dir_path.mkdir(parents=True, exist_ok=True)
 
     def get_total_usage(self) -> Dict[str, int]:
+        phase_usages = [
+            usage
+            for phase_message in self._phase_messages
+            if isinstance((usage := getattr(phase_message, "usage", None)), dict)
+        ]
         total_input_tokens = sum(
-            phase_message.usage[INPUT_TOKEN] for phase_message in self._phase_messages
+            normalize_usage_value(usage.get(INPUT_TOKEN)) for usage in phase_usages
         )
         total_output_tokens = sum(
-            phase_message.usage[OUTPUT_TOKEN] for phase_message in self._phase_messages
+            normalize_usage_value(usage.get(OUTPUT_TOKEN)) for usage in phase_usages
         )
         total_time = sum(
-            phase_message.usage[QUERY_TIME_TAKEN_IN_MS]
-            for phase_message in self._phase_messages
+            normalize_usage_value(usage.get(QUERY_TIME_TAKEN_IN_MS))
+            for usage in phase_usages
         )
         usage_dict = {
             "total_input_tokens": total_input_tokens,
