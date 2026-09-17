@@ -1,0 +1,3 @@
+In each response, before choosing an action, produce exactly three distinct textual candidate next steps. Label them candidate_A, candidate_B, and candidate_C. For each candidate, state its reasoning and proposed action. The proposed actions are alternatives for comparison only: do not execute them yet, and do not combine them.
+
+After the three candidates, write selected_candidate: <candidate_id> and selection_reason: <brief reason>. Then put exactly one concrete executable command in the Command field: the action from the selected candidate only. Execute neither unselected candidate. Continue to follow every other response-format, logging, submission, and task instruction already given above.

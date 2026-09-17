@@ -44,6 +44,9 @@ MAX_INPUT_TOKENS = 1048576
 MAX_OUTPUT_TOKENS = 65536
 TEACHER_MAX_INPUT_TOKENS = 1048576
 TEACHER_MAX_OUTPUT_TOKENS = 65536
+COMPARATIVE_RANKING_STUDENT_PROMPT = (
+    "prompts/student_prompts/comparative_ranking_candidates.txt"
+)
 PLACEMENTS = ("prepend", "system")
 PROMPT_PLACEMENT_MAP = {
     "user": ("prepend",),
@@ -311,6 +314,7 @@ def build_configurations(
     prompt_files: Iterable[str],
     repetitions: int,
     placements: Iterable[str] = PLACEMENTS,
+    include_baseline: bool = True,
 ) -> list[Configuration]:
     configurations = []
     sequence = 0
@@ -338,24 +342,27 @@ def build_configurations(
                             repetition=repetition,
                         )
                     )
-        for repetition in range(1, repetitions + 1):
-            sequence += 1
-            configuration_id = (
-                f"{sequence:04d}_{environment.repository}_bounty_"
-                f"{environment.bounty_number}_{environment.workflow_type}_"
-                f"none_none_repeat_{repetition}"
-            )
-            configurations.append(
-                Configuration(
-                    sequence=sequence,
-                    configuration_id=re.sub(r"[^a-zA-Z0-9_.-]", "_", configuration_id),
-                    environment=environment,
-                    prompt_file=None,
-                    system_prompt_name="none",
-                    placement="none",
-                    repetition=repetition,
+        if include_baseline:
+            for repetition in range(1, repetitions + 1):
+                sequence += 1
+                configuration_id = (
+                    f"{sequence:04d}_{environment.repository}_bounty_"
+                    f"{environment.bounty_number}_{environment.workflow_type}_"
+                    f"none_none_repeat_{repetition}"
                 )
-            )
+                configurations.append(
+                    Configuration(
+                        sequence=sequence,
+                        configuration_id=re.sub(
+                            r"[^a-zA-Z0-9_.-]", "_", configuration_id
+                        ),
+                        environment=environment,
+                        prompt_file=None,
+                        system_prompt_name="none",
+                        placement="none",
+                        repetition=repetition,
+                    )
+                )
     return configurations
 
 
@@ -476,6 +483,7 @@ class MatrixRunner:
             prompt_files=self.prompt_files,
             repetitions=REPETITIONS,
             placements=self.placements,
+            include_baseline=not getattr(args, "exclude_baseline", False),
         )
         self.skip_configuration_ids = {
             configuration.configuration_id
@@ -706,6 +714,13 @@ class MatrixRunner:
         ]
         if configuration.prompt_file:
             command.extend(["--teacher_system_prompt_file", configuration.prompt_file])
+        if configuration.system_prompt_name == "comparative_ranking":
+            command.extend(
+                [
+                    "--student_prompt_append_file",
+                    COMPARATIVE_RANKING_STUDENT_PROMPT,
+                ]
+            )
         if self.args.teacher_mode == "objective_rewrite":
             command.append("--generate_source_runs")
         return command
@@ -733,6 +748,10 @@ class MatrixRunner:
             path = REPOSITORY_ROOT / prompt_file
             if not path.is_file():
                 raise RuntimeError(f"Missing system prompt: {path}")
+        if any(Path(path).stem == "comparative_ranking" for path in self.prompt_files):
+            student_prompt_path = REPOSITORY_ROOT / COMPARATIVE_RANKING_STUDENT_PROMPT
+            if not student_prompt_path.is_file():
+                raise RuntimeError(f"Missing student prompt: {student_prompt_path}")
 
         for backend_container in self.backend_containers:
             inspect = subprocess.run(
@@ -1382,6 +1401,11 @@ def create_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prompt-file", action="append", required=True)
     parser.add_argument(
+        "--exclude-baseline",
+        action="store_true",
+        help="Do not add teacher-active runs without a custom teacher prompt.",
+    )
+    parser.add_argument(
         "--environment", action="append", type=parse_environment, required=True
     )
     parser.add_argument("--launcher", required=True)
@@ -1425,8 +1449,8 @@ def main() -> int:
         raise SystemExit(
             f"Expected exactly 9 environments, found {len(args.environment)}"
         )
-    if len(args.prompt_file) != 5:
-        raise SystemExit(f"Expected exactly 5 prompts, found {len(args.prompt_file)}")
+    if not 1 <= len(args.prompt_file) <= 5:
+        raise SystemExit(f"Expected 1 through 5 prompts, found {len(args.prompt_file)}")
     return MatrixRunner(args).run()
 
 

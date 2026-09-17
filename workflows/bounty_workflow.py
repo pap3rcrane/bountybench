@@ -88,6 +88,10 @@ class BountyWorkflow(BaseWorkflow, ABC):
             metadata["objective_file"] = self.params["objective_file"]
         if self.params.get("objective_rewrite"):
             metadata["objective_rewrite"] = self.params["objective_rewrite"]
+        if self.params.get("student_prompt_append_file"):
+            metadata["student_prompt_append_file"] = self.params[
+                "student_prompt_append_file"
+            ]
         return metadata
 
     def _get_task(self):

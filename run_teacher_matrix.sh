@@ -20,6 +20,9 @@ set -uo pipefail
 #       Select where custom teacher prompts are sent. "user" uses the existing
 #       prepend placement, "system" uses Gemini's API system instruction, and
 #       "both" runs both variants separately. Default: both.
+#   --only-prompt NAME
+#       Run only the named custom teacher prompt and omit the no-custom-prompt
+#       baseline. Example: --modes steer --only-prompt comparative_ranking.
 #   --teacher-max-input-tokens NUMBER
 #       Maximum Gemini teacher input context. Default: 1048576, the model maximum.
 #   --teacher-max-output-tokens NUMBER
@@ -84,6 +87,7 @@ usage() {
     "  --jobs NUMBER|all                    Global configuration workers; all means 30." \
     "  --setup-jobs NUMBER                  Concurrent repository setups; default 5." \
     "  --prompt-placement PLACEMENT         user, system, or both; default both." \
+    "  --only-prompt NAME                   Run only one named prompt; omit baseline." \
     "  --teacher-max-input-tokens NUMBER    Gemini teacher input limit; default 1048576." \
     "  --teacher-max-output-tokens NUMBER   Gemini teacher output limit; default 65536." \
     "  --phase-iterations NUMBER            Student phase limit; default 300." \
@@ -102,6 +106,7 @@ SELECTED_MODES_CSV="observe,steer,objective_rewrite"
 SELECTED_JOBS="all"
 SELECTED_SETUP_JOBS=5
 SELECTED_PROMPT_PLACEMENT="both"
+SELECTED_ONLY_PROMPT=""
 SELECTED_TEACHER_MAX_INPUT_TOKENS=1048576
 SELECTED_TEACHER_MAX_OUTPUT_TOKENS=65536
 SELECTED_PHASE_ITERATIONS=300
@@ -161,6 +166,22 @@ while [[ $# -gt 0 ]]; do
       ;;
     --prompt-placement=*)
       SELECTED_PROMPT_PLACEMENT="${1#*=}"
+      shift
+      ;;
+    --only-prompt)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --only-prompt requires a prompt filename stem.\n' >&2
+        exit 2
+      fi
+      SELECTED_ONLY_PROMPT="$2"
+      shift 2
+      ;;
+    --only-prompt=*)
+      SELECTED_ONLY_PROMPT="${1#*=}"
+      if [[ -z "$SELECTED_ONLY_PROMPT" ]]; then
+        printf 'ERROR: --only-prompt requires a prompt filename stem.\n' >&2
+        exit 2
+      fi
       shift
       ;;
     --teacher-max-input-tokens)
@@ -495,6 +516,7 @@ start_workers() {
       --env "BOUNTYBENCH_REPO_SETUP_GATE_DIR=$MATRIX_SETUP_GATE_PATH"
       --env "BOUNTYBENCH_REPO_SETUP_CONCURRENCY=$MATRIX_SETUP_JOB_COUNT"
       --volume "$REPOSITORY_ROOT/prompts/teacher_agent_system_prompt.txt:/app/prompts/teacher_agent_system_prompt.txt:ro"
+      --volume "$REPOSITORY_ROOT/prompts/student_prompts:/app/prompts/student_prompts:ro"
       --volume "$REPOSITORY_ROOT/prompts/system_prompts:/app/prompts/system_prompts:ro"
     )
     if [[ "$MATRIX_REGISTRY_CACHE_ENABLED" == true ]]; then
@@ -611,6 +633,22 @@ configure_mode() {
       )
       ;;
   esac
+
+  if [[ -n "$SELECTED_ONLY_PROMPT" ]]; then
+    local matching_prompts=()
+    local candidate_prompt
+    for candidate_prompt in "${PROMPT_FILES[@]}"; do
+      if [[ "$(basename "$candidate_prompt" .txt)" == "$SELECTED_ONLY_PROMPT" ]]; then
+        matching_prompts+=("$candidate_prompt")
+      fi
+    done
+    if [[ ${#matching_prompts[@]} -eq 0 ]]; then
+      printf 'ERROR: prompt %s is not configured for mode %s.\n' \
+        "$SELECTED_ONLY_PROMPT" "$mode" >&2
+      exit 2
+    fi
+    PROMPT_FILES=("${matching_prompts[@]}")
+  fi
 }
 
 resolve_worker_allocation() {
@@ -643,6 +681,10 @@ run_mode() {
     --phase-iterations "$SELECTED_PHASE_ITERATIONS"
     --launcher "$0"
   )
+
+  if [[ -n "$SELECTED_ONLY_PROMPT" ]]; then
+    command+=(--exclude-baseline)
+  fi
 
   local prompt_file environment argument skip_source worker_number worker_name
   for ((worker_number = 1; worker_number <= MATRIX_WORKER_COUNT; worker_number++)); do

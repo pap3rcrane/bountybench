@@ -3,6 +3,7 @@ import atexit
 import subprocess
 from abc import ABC, abstractmethod
 from enum import Enum
+from pathlib import Path
 from typing import Any, Dict, Type
 
 from agents.agent_manager import AgentManager
@@ -50,6 +51,11 @@ class BaseWorkflow(ABC):
                 self.name,
                 "{objective_override}",
             )
+        if self.params.get("student_prompt_append_file"):
+            self.initial_prompt = self._append_student_prompt_file(
+                self.initial_prompt,
+                self.params["student_prompt_append_file"],
+            )
 
         self.workflow_message = WorkflowMessage(
             workflow_name=self.name,
@@ -69,6 +75,18 @@ class BaseWorkflow(ABC):
         self.next_iteration_queue = asyncio.Queue()
 
         atexit.register(self._finalize_workflow)
+
+    @staticmethod
+    def _append_student_prompt_file(initial_prompt: str, prompt_file: str) -> str:
+        path = Path(prompt_file).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parents[1] / path
+        if not path.is_file():
+            raise ValueError(f"Student prompt append file does not exist: {path}")
+        appendix = path.read_text().strip()
+        if not appendix:
+            raise ValueError(f"Student prompt append file is empty: {path}")
+        return f"{initial_prompt.rstrip()}\n\n{appendix}\n"
 
     def _finalize_workflow(self):
         self.workflow_message.on_exit()

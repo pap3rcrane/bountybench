@@ -162,6 +162,11 @@ class WorkflowRunner:
             help="Directory for generated objective JSON files",
         )
         parser.add_argument(
+            "--student_prompt_append_file",
+            type=str,
+            help="Text file appended to the rendered student benchmark prompt",
+        )
+        parser.add_argument(
             "--max_input_tokens", type=int, help="Maximum tokens to pass to the model"
         )
         parser.add_argument(

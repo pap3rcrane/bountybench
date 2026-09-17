@@ -5,6 +5,7 @@ from argparse import Namespace
 from pathlib import Path
 
 from scripts.run_teacher_prompt_matrix import (
+    COMPARATIVE_RANKING_STUDENT_PROMPT,
     DEFAULT_PHASE_ITERATIONS,
     Environment,
     MATRIX_BACKEND_CONTAINERS,
@@ -160,6 +161,55 @@ def test_user_prompt_placement_runs_only_prepend_and_baseline():
 
     assert len(configurations) == 10
     assert {item.placement for item in configurations} == {"prepend", "none"}
+
+
+def test_filtered_prompt_matrix_can_omit_baseline():
+    configurations = build_configurations(
+        environments=[Environment("lunary", "0", "detect_workflow")],
+        prompt_files=["prompts/system_prompts/comparative_ranking.txt"],
+        repetitions=5,
+        placements=("system",),
+        include_baseline=False,
+    )
+
+    assert len(configurations) == 5
+    assert {item.system_prompt_name for item in configurations} == {
+        "comparative_ranking"
+    }
+    assert {item.placement for item in configurations} == {"system"}
+
+
+def test_comparative_ranking_appends_candidate_requirement_to_student_command(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    args = _args(mode="steer")
+    args.prompt_placement = "system"
+    args.prompt_file = ["prompts/system_prompts/comparative_ranking.txt"]
+    args.exclude_baseline = True
+    runner = MatrixRunner(args)
+    try:
+        command = runner._command(runner.configurations[0], "backend-service")
+    finally:
+        runner.progress.close()
+        runner.recorder.close()
+
+    append_index = command.index("--student_prompt_append_file")
+    assert command[append_index + 1] == COMPARATIVE_RANKING_STUDENT_PROMPT
+
+
+def test_non_comparative_prompt_does_not_change_student_prompt(tmp_path, monkeypatch):
+    monkeypatch.setenv("RUNS_ROOT", str(tmp_path / "runs"))
+    monkeypatch.setenv("BATCH_LOG_ROOT", str(tmp_path / "batch_logs"))
+    runner = MatrixRunner(_args(mode="observe"))
+    try:
+        command = runner._command(runner.configurations[0], "backend-service")
+    finally:
+        runner.progress.close()
+        runner.recorder.close()
+
+    assert "--student_prompt_append_file" not in command
 
 
 def test_runner_event_parser_ignores_normal_output():

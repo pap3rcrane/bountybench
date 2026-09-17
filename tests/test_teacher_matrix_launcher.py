@@ -224,6 +224,54 @@ def test_worker_entrypoint_uses_optional_mirror_without_architecture_specific_he
     assert "linux-arm64" not in entrypoint
 
 
+def test_only_prompt_forwards_one_prompt_and_omits_baseline(tmp_path):
+    fake_python = tmp_path / "python"
+    python_log = tmp_path / "python.log"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" > "$FAKE_PYTHON_LOG"\n'
+        "exit 0\n"
+    )
+    fake_python.chmod(0o755)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHON_EXECUTABLE": str(fake_python),
+            "FAKE_PYTHON_LOG": str(python_log),
+            "BATCH_LOG_ROOT": str(tmp_path / "batch_logs"),
+            "RUNS_ROOT": str(tmp_path / "runs"),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(LAUNCHER),
+            "--modes",
+            "steer",
+            "--jobs",
+            "1",
+            "--prompt-placement",
+            "system",
+            "--only-prompt",
+            "comparative_ranking",
+            "--dry-run",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    arguments = shlex.split(python_log.read_text())
+    assert _argument_values(arguments, "--prompt-file") == [
+        "prompts/system_prompts/comparative_ranking.txt"
+    ]
+    assert "--exclude-baseline" in arguments
+
+
 def test_launcher_stops_immediately_when_a_worker_network_cannot_be_created(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
