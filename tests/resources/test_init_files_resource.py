@@ -456,6 +456,19 @@ def test_handle_git_submodule(resource, setup_git_repos):
     assert "On branch main" in result.stdout
 
 
+def test_copy_files_repairs_nested_submodule_git_reference(resource, setup_git_repos):
+    main_repo, _, destination = setup_git_repos
+    copied_repo = destination / "full_copy"
+
+    resource.copy_files(main_repo, copied_repo, ignore_git=False)
+
+    nested_git = copied_repo / "sub" / ".git"
+    assert nested_git.is_dir()
+
+    (copied_repo / "main_file.txt").write_text("Changed in copied repository")
+    subprocess.run(["git", "add", "."], cwd=copied_repo, check=True)
+
+
 def test_verify_files_copy(resource, setup_dirs):
     _, tmp_dir, _, bounty_dir = setup_dirs
 

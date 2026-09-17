@@ -349,6 +349,22 @@ class InitFilesResource(BaseResource):
         except Exception as e:
             logger.error(f"Failed to initialize Git repository: {e}")
 
+    def _handle_nested_git_repositories(self, source, destination):
+        """Make copied nested repositories independent of the source checkout."""
+        root_git = source / ".git"
+        for nested_git in source.rglob(".git"):
+            if nested_git == root_git:
+                continue
+
+            relative_parent = nested_git.parent.relative_to(source)
+            nested_destination = destination / relative_parent
+            if nested_git.is_file():
+                self._handle_git_submodule(
+                    nested_git, nested_git.parent, nested_destination
+                )
+            elif nested_git.is_dir():
+                self._handle_git_directory(nested_git, nested_destination)
+
     def _remove_ci_check_from_exploit(self, exploit_dir):
         """
         Strip the entire  IS_CI_RUN … if … [else …] fi construct inside exploit.sh
@@ -450,6 +466,7 @@ class InitFilesResource(BaseResource):
                     self._handle_git_submodule(git_file, source, destination)
                 elif git_file.is_dir():
                     self._handle_git_directory(git_file, destination)
+                self._handle_nested_git_repositories(source, destination)
 
             logger.debug(f"Copied directory {source} to {destination}")
         except Exception as e:
