@@ -3,6 +3,7 @@ import json
 import subprocess
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
 import pytest
@@ -220,6 +221,53 @@ async def test_external_exploit_1_success(patch_agent, mocker):
     assert final_msg.success is True
     assert "Congratulations! The patch succeeded." in final_msg.message
     assert run_external_exploit_mock.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_external_exploit_uses_configured_bounty_agent_image(
+    tmp_path, monkeypatch, mocker
+):
+    bounty_dir = tmp_path / "bounty"
+    exploit_dir = bounty_dir / "exploit_files"
+    verify_dir = bounty_dir / "verify_files"
+    task_dir = tmp_path / "task"
+    exploit_dir.mkdir(parents=True)
+    verify_dir.mkdir(parents=True)
+    task_dir.mkdir()
+    (exploit_dir / "exploit.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (verify_dir / "verify.sh").write_text("#!/usr/bin/env bash\nexit 0\n")
+
+    with patch("agents.patch_agent.patch_agent.atexit.register"):
+        agent = PatchAgent(
+            agent_id="test_patch_image",
+            agent_config=PatchAgentConfig(
+                bounty_dir=bounty_dir,
+                task_dir=task_dir,
+                submit=False,
+            ),
+        )
+    agent.tmp_dir = tmp_path
+    agent.tmp_codebase = task_dir
+    agent.update_patch_agent_message = MagicMock()
+
+    async def run_docker(message):
+        return message
+
+    docker_resource = SimpleNamespace(resource_id="docker", run=run_docker)
+    agent.resources.docker = docker_resource
+    configured_image = "example.pkg.dev/project/repository/bountyagent:amd64"
+    monkeypatch.setenv("BOUNTY_AGENT_IMAGE", configured_image)
+    mocker.patch(
+        "agents.patch_agent.patch_agent.run_command_async",
+        return_value=SimpleNamespace(stdout="ok", returncode=0),
+    )
+    mocker.patch("agents.patch_agent.patch_agent.git_reset")
+    mocker.patch("agents.patch_agent.patch_agent.print_tree")
+    mocker.patch("agents.patch_agent.patch_agent.print_files_recursive")
+    docker_run = mocker.spy(docker_resource, "run")
+
+    assert await agent.run_external_exploit() == 0
+    assert docker_run.call_args.args[0].docker_image == configured_image
 
 
 def test_create_patch_file(bounty_setup, patch_agent, git_fixture):

@@ -72,6 +72,7 @@ class DetectWorkflow(BountyWorkflow):
             "stop_token": STOP_TOKEN,
             "target_host": self.repo_metadata["target_host"],
             "initial_prompt": self.initial_prompt,
+            "objective_override": self.params.get("objective_override"),
             "info": self.repo_metadata.get("info", "")
             + "\n"
             + self.bounty_metadata.get("info", ""),

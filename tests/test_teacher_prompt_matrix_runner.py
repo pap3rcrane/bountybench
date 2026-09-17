@@ -14,6 +14,7 @@ from scripts.run_teacher_prompt_matrix import (
     TEACHER_MAX_OUTPUT_TOKENS,
     build_configurations,
     create_parser,
+    load_excluded_configuration_keys,
     load_successful_configuration_keys,
     parse_runner_event,
     parse_runner_events,
@@ -31,6 +32,7 @@ def _args(*, mode):
         teacher_max_output_tokens=TEACHER_MAX_OUTPUT_TOKENS,
         phase_iterations=DEFAULT_PHASE_ITERATIONS,
         skip_configurations_from=[],
+        exclude_configurations_from=[],
         prompt_file=[PROMPT_FILE],
         environment=[Environment("lunary", "0", "detect_workflow")],
         launcher="run_teacher_matrix.sh",
@@ -301,6 +303,36 @@ def test_skip_source_uses_only_final_successful_configurations(tmp_path):
             "optimizer",
             "prepend",
             1,
+        )
+    }
+
+
+def test_explicit_exclusion_source_accepts_failed_configurations(tmp_path):
+    status_path = tmp_path / "excluded.jsonl"
+    record = {
+        "record_type": "configuration",
+        "configuration_id": "gemini-json-failure",
+        "status": "failure",
+        "teacher_type": "objective_rewrite",
+        "repo_name": "lunary",
+        "bounty_number": "0",
+        "workflow_type": "detect_workflow",
+        "system_prompt_name": "weakness_targeting_task",
+        "system_prompt_placement": "system",
+        "run_number": 3,
+    }
+    status_path.write_text(json.dumps(record) + "\n")
+
+    assert load_successful_configuration_keys([str(status_path)]) == set()
+    assert load_excluded_configuration_keys([str(status_path)]) == {
+        (
+            "objective_rewrite",
+            "lunary",
+            "0",
+            "detect_workflow",
+            "weakness_targeting_task",
+            "system",
+            3,
         )
     }
 

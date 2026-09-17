@@ -402,15 +402,28 @@ def extract_error(line: str) -> Optional[str]:
     return None
 
 
-def load_successful_configuration_keys(status_paths: Iterable[str]) -> set[tuple]:
-    """Load only finalized, successful top-level configurations."""
+CONFIGURATION_KEY_FIELDS = (
+    "teacher_type",
+    "repo_name",
+    "bounty_number",
+    "workflow_type",
+    "system_prompt_name",
+    "system_prompt_placement",
+    "run_number",
+)
+
+
+def load_configuration_keys(
+    status_paths: Iterable[str], *, successful_only: bool
+) -> set[tuple]:
+    """Load matching top-level configurations from JSONL status indexes."""
     configuration_keys = set()
     for supplied_path in status_paths:
         path = Path(supplied_path).expanduser()
         if not path.is_absolute():
             path = REPOSITORY_ROOT / path
         if not path.is_file():
-            raise ValueError(f"Skip status file does not exist: {path}")
+            raise ValueError(f"Configuration status file does not exist: {path}")
 
         with path.open() as status_file:
             for line_number, line in enumerate(status_file, start=1):
@@ -420,30 +433,32 @@ def load_successful_configuration_keys(status_paths: Iterable[str]) -> set[tuple
                     record = json.loads(line)
                 except json.JSONDecodeError as error:
                     raise ValueError(
-                        f"Invalid JSON in skip status file {path}:{line_number}"
+                        f"Invalid JSON in configuration status file "
+                        f"{path}:{line_number}"
                     ) from error
-                if (
-                    record.get("record_type") == "configuration"
-                    and record.get("status") == "success"
-                ):
-                    required_fields = (
-                        "teacher_type",
-                        "repo_name",
-                        "bounty_number",
-                        "workflow_type",
-                        "system_prompt_name",
-                        "system_prompt_placement",
-                        "run_number",
+                if record.get("record_type") != "configuration":
+                    continue
+                if successful_only and record.get("status") != "success":
+                    continue
+                if not all(field in record for field in CONFIGURATION_KEY_FIELDS):
+                    raise ValueError(
+                        f"Configuration in {path}:{line_number} is missing "
+                        "fields required for safe matching"
                     )
-                    if not all(field in record for field in required_fields):
-                        raise ValueError(
-                            f"Successful configuration in {path}:{line_number} "
-                            "is missing fields required for safe matching"
-                        )
-                    configuration_keys.add(
-                        tuple(record[field] for field in required_fields)
-                    )
+                configuration_keys.add(
+                    tuple(record[field] for field in CONFIGURATION_KEY_FIELDS)
+                )
     return configuration_keys
+
+
+def load_successful_configuration_keys(status_paths: Iterable[str]) -> set[tuple]:
+    """Load only finalized, successful top-level configurations."""
+    return load_configuration_keys(status_paths, successful_only=True)
+
+
+def load_excluded_configuration_keys(status_paths: Iterable[str]) -> set[tuple]:
+    """Load every top-level configuration explicitly selected for exclusion."""
+    return load_configuration_keys(status_paths, successful_only=False)
 
 
 def configuration_key(configuration: Configuration, teacher_type: str) -> tuple:
@@ -495,6 +510,12 @@ class MatrixRunner:
         requested_skip_keys = load_successful_configuration_keys(
             self.skip_configuration_sources
         )
+        self.exclude_configuration_sources = list(
+            getattr(args, "exclude_configurations_from", [])
+        )
+        requested_exclude_keys = load_excluded_configuration_keys(
+            self.exclude_configuration_sources
+        )
         self.configurations = build_configurations(
             environments=self.environments,
             prompt_files=self.prompt_files,
@@ -507,6 +528,12 @@ class MatrixRunner:
             for configuration in self.configurations
             if configuration_key(configuration, args.teacher_mode)
             in requested_skip_keys
+        }
+        self.exclude_configuration_ids = {
+            configuration.configuration_id
+            for configuration in self.configurations
+            if configuration_key(configuration, args.teacher_mode)
+            in requested_exclude_keys
         }
         timestamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S-%f%z")
         self.batch_id = f"{args.matrix_name}_{timestamp}"
@@ -584,6 +611,8 @@ class MatrixRunner:
             "placements": list(self.placements) + ["none"],
             "skip_configuration_sources": self.skip_configuration_sources,
             "skip_configuration_count": len(self.skip_configuration_ids),
+            "exclude_configuration_sources": self.exclude_configuration_sources,
+            "exclude_configuration_count": len(self.exclude_configuration_ids),
             "prompt_files": self.prompt_files,
             "environments": [
                 {
@@ -1103,15 +1132,15 @@ class MatrixRunner:
         return status
 
     def _skip_configuration(
-        self, configuration: Configuration, backend_container: str
+        self,
+        configuration: Configuration,
+        backend_container: str,
+        *,
+        reason: str,
     ) -> str:
-        """Record a prior successful configuration without executing it again."""
+        """Record a selected configuration without executing it again."""
         self.progress.start_configuration(
             configuration, len(self.configurations), backend_container
-        )
-        reason = (
-            "Skipped because a supplied status index records this finalized "
-            "configuration as successful."
         )
         finished_at = now_iso()
         for role in self.planned_roles:
@@ -1167,7 +1196,23 @@ class MatrixRunner:
 
                     if configuration.configuration_id in self.skip_configuration_ids:
                         status = self._skip_configuration(
-                            configuration, backend_container
+                            configuration,
+                            backend_container,
+                            reason=(
+                                "Skipped because a supplied status index records "
+                                "this finalized configuration as successful."
+                            ),
+                        )
+                    elif (
+                        configuration.configuration_id in self.exclude_configuration_ids
+                    ):
+                        status = self._skip_configuration(
+                            configuration,
+                            backend_container,
+                            reason=(
+                                "Skipped because an explicit exclusion manifest "
+                                "selected this configuration."
+                            ),
                         )
                     else:
                         status = self._run_configuration(
@@ -1274,6 +1319,11 @@ class MatrixRunner:
             self.progress.write(
                 f"Skipping {len(self.skip_configuration_ids)} configurations "
                 "previously recorded as successful."
+            )
+        if self.exclude_configuration_ids:
+            self.progress.write(
+                f"Excluding {len(self.exclude_configuration_ids)} configurations "
+                "selected by explicit exclusion manifests."
             )
 
         batch_error = None
@@ -1434,6 +1484,16 @@ def create_parser() -> argparse.ArgumentParser:
         help=(
             "May be repeated; skip finalized top-level configurations recorded "
             "as successful in a prior run_status.jsonl."
+        ),
+    )
+    parser.add_argument(
+        "--exclude-configurations-from",
+        action="append",
+        default=[],
+        metavar="STATUS_JSONL",
+        help=(
+            "May be repeated; skip every top-level configuration present in an "
+            "explicit exclusion manifest, regardless of its recorded status."
         ),
     )
     parser.add_argument("--dry-run", action="store_true")

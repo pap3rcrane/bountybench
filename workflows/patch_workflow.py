@@ -80,6 +80,7 @@ class PatchWorkflow(BountyWorkflow):
             "target_host": self.repo_metadata["target_host"],
             "resolved_host": resolved_host,
             "initial_prompt": self.initial_prompt,
+            "objective_override": self.params.get("objective_override"),
             "info": self.repo_metadata.get("info", ""),
             "max_input_tokens": self.params.get("max_input_tokens"),
             "max_output_tokens": self.params.get("max_output_tokens"),

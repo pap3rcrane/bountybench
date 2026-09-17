@@ -35,6 +35,10 @@ set -uo pipefail
 #       May be repeated. Skip only finalized top-level configurations recorded
 #       with status "success" in a previous run_status.jsonl. In-progress
 #       student runs and failed configurations are never skipped.
+#   --exclude-configurations-from STATUS_JSONL
+#       May be repeated. Explicitly skip every top-level configuration present
+#       in the supplied JSONL, regardless of status. Use this for failures that
+#       should intentionally not be retried, such as Gemini JSON-format errors.
 #
 # Resume source for the currently interrupted observe matrix. This intentionally
 # selects its 143 finalized successful configuration records, not student runs
@@ -92,6 +96,7 @@ usage() {
     "  --teacher-max-output-tokens NUMBER   Gemini teacher output limit; default 65536." \
     "  --phase-iterations NUMBER            Student phase limit; default 300." \
     "  --skip-configurations-from FILE      Skip prior successful configurations." \
+    "  --exclude-configurations-from FILE   Explicitly skip listed configurations." \
     "  --dry-run                           Plan and record without executing." \
     "  --prune-dind-between-repositories   Reclaim unused inner Docker storage." \
     "  --verbose                           Stream complete workflow output." \
@@ -111,6 +116,7 @@ SELECTED_TEACHER_MAX_INPUT_TOKENS=1048576
 SELECTED_TEACHER_MAX_OUTPUT_TOKENS=65536
 SELECTED_PHASE_ITERATIONS=300
 SKIP_CONFIGURATION_SOURCES=()
+EXCLUDE_CONFIGURATION_SOURCES=()
 DRY_RUN=false
 FORWARD_ARGUMENTS=()
 
@@ -230,6 +236,18 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-configurations-from=*)
       SKIP_CONFIGURATION_SOURCES+=("${1#*=}")
+      shift
+      ;;
+    --exclude-configurations-from)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        printf 'ERROR: --exclude-configurations-from requires a JSONL file.\n' >&2
+        exit 2
+      fi
+      EXCLUDE_CONFIGURATION_SOURCES+=("$2")
+      shift 2
+      ;;
+    --exclude-configurations-from=*)
+      EXCLUDE_CONFIGURATION_SOURCES+=("${1#*=}")
       shift
       ;;
     --dry-run)
@@ -686,7 +704,7 @@ run_mode() {
     command+=(--exclude-baseline)
   fi
 
-  local prompt_file environment argument skip_source worker_number worker_name
+  local prompt_file environment argument skip_source exclude_source worker_number worker_name
   for ((worker_number = 1; worker_number <= MATRIX_WORKER_COUNT; worker_number++)); do
     worker_name="backend-worker-$worker_number"
     command+=(--backend-container "$worker_name")
@@ -703,6 +721,9 @@ run_mode() {
   done
   for skip_source in "${SKIP_CONFIGURATION_SOURCES[@]+"${SKIP_CONFIGURATION_SOURCES[@]}"}"; do
     command+=(--skip-configurations-from "$skip_source")
+  done
+  for exclude_source in "${EXCLUDE_CONFIGURATION_SOURCES[@]+"${EXCLUDE_CONFIGURATION_SOURCES[@]}"}"; do
+    command+=(--exclude-configurations-from "$exclude_source")
   done
   for argument in "${ORIGINAL_ARGUMENTS[@]+"${ORIGINAL_ARGUMENTS[@]}"}"; do
     command+=("--launcher-argument=$argument")

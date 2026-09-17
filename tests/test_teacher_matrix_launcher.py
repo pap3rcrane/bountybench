@@ -272,6 +272,53 @@ def test_only_prompt_forwards_one_prompt_and_omits_baseline(tmp_path):
     assert "--exclude-baseline" in arguments
 
 
+def test_launcher_forwards_explicit_exclusion_manifest(tmp_path):
+    fake_python = tmp_path / "python"
+    python_log = tmp_path / "python.log"
+    exclusion_manifest = tmp_path / "excluded.jsonl"
+    exclusion_manifest.write_text("")
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        'printf "%s\\n" "$*" > "$FAKE_PYTHON_LOG"\n'
+        "exit 0\n"
+    )
+    fake_python.chmod(0o755)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "PYTHON_EXECUTABLE": str(fake_python),
+            "FAKE_PYTHON_LOG": str(python_log),
+            "BATCH_LOG_ROOT": str(tmp_path / "batch_logs"),
+            "RUNS_ROOT": str(tmp_path / "runs"),
+        }
+    )
+
+    result = subprocess.run(
+        [
+            str(LAUNCHER),
+            "--modes",
+            "observe",
+            "--jobs",
+            "1",
+            "--exclude-configurations-from",
+            str(exclusion_manifest),
+            "--dry-run",
+        ],
+        cwd=PROJECT_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    arguments = shlex.split(python_log.read_text())
+    assert _argument_values(arguments, "--exclude-configurations-from") == [
+        str(exclusion_manifest)
+    ]
+
+
 def test_launcher_stops_immediately_when_a_worker_network_cannot_be_created(tmp_path):
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
