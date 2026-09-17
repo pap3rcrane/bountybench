@@ -1,4 +1,5 @@
 import atexit
+import json
 import os
 import sys
 import time
@@ -6,6 +7,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+from urllib.request import Request, urlopen
 
 import docker
 from docker.models.containers import Container
@@ -28,6 +30,11 @@ DOCKER_CLIENT_INIT_TIMEOUT: int = 300
 TIMEOUT_PER_COMMAND: int = 600
 MAX_RETRIES: int = 3
 RETRY_DELAY: int = 5
+GCE_METADATA_TOKEN_URL: str = (
+    "http://metadata.google.internal/computeMetadata/v1/instance/"
+    "service-accounts/default/token"
+)
+GCE_METADATA_TIMEOUT: int = 10
 
 # Use a 20-minute timeout for pip installation
 PIP_INSTALL_TIMEOUT: int = 1200
@@ -363,6 +370,58 @@ class KaliEnvResource(RunnableBaseResource):
             logger.error(f"Force removal failed: {e}")
             raise
 
+    @staticmethod
+    def _artifact_registry_for_image(docker_image: str) -> Optional[str]:
+        registry = docker_image.partition("/")[0]
+        return registry if registry.endswith(".pkg.dev") else None
+
+    @staticmethod
+    def _is_registry_auth_error(error: Exception) -> bool:
+        response = getattr(error, "response", None)
+        return getattr(response, "status_code", None) == 401 or any(
+            marker in str(error).lower()
+            for marker in ("401 client error", "authentication failed", "unauthorized")
+        )
+
+    def _refresh_artifact_registry_auth(self, registry: str) -> None:
+        request = Request(
+            GCE_METADATA_TOKEN_URL,
+            headers={"Metadata-Flavor": "Google"},
+        )
+        with urlopen(request, timeout=GCE_METADATA_TIMEOUT) as response:
+            token = json.load(response).get("access_token")
+        if not token:
+            raise RuntimeError("GCE metadata response did not contain an access token")
+        self.client.login(
+            username="oauth2accesstoken",
+            password=token,
+            registry=registry,
+            reauth=True,
+        )
+
+    def _ensure_docker_image(self, docker_image: str) -> None:
+        try:
+            self.client.images.get(docker_image)
+            logger.debug(f"Using cached Docker image: {docker_image}")
+            return
+        except docker.errors.ImageNotFound:
+            pass
+
+        logger.debug(f"Pulling Docker image: {docker_image}")
+        try:
+            self.client.images.pull(docker_image)
+        except docker.errors.APIError as error:
+            registry = self._artifact_registry_for_image(docker_image)
+            if registry is None or not self._is_registry_auth_error(error):
+                raise
+            logger.warning(
+                f"Artifact Registry authentication was rejected for {registry}; "
+                "refreshing the GCE token and retrying the pull."
+            )
+            self._refresh_artifact_registry_auth(registry)
+            self.client.images.pull(docker_image)
+        logger.debug(f"Docker image is available: {docker_image}")
+
     def _create_and_start_container(
         self, name: str, volumes: Optional[Dict[str, Dict[str, str]]], attempt: int
     ) -> Optional[Container]:
@@ -371,15 +430,7 @@ class KaliEnvResource(RunnableBaseResource):
             f"Starting a new Docker container (Attempt {attempt + 1}/{MAX_RETRIES})..."
         )
         try:
-            # Pull the latest image before starting the container
-            logger.debug(f"Pulling the latest Docker image: {docker_image}")
-            try:
-                self.client.images.pull(docker_image)
-                logger.debug(f"Successfully pulled the latest image: {docker_image}")
-            except Exception as e:
-                logger.warning(
-                    f"Failed to pull the latest image: {e}. Will use existing image if available."
-                )
+            self._ensure_docker_image(docker_image)
 
             print(self.client.containers)
             print("in start")

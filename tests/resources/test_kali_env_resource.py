@@ -1,4 +1,5 @@
 import concurrent.futures
+import io
 import os
 import shutil
 import sys
@@ -167,6 +168,7 @@ def test_bounty_agent_image_can_be_overridden(monkeypatch):
     container = MagicMock()
     resource.client.containers.run.return_value = container
     resource.util.wait_for_container.return_value = True
+    resource.client.images.get.side_effect = docker.errors.ImageNotFound("missing")
     monkeypatch.setenv("BOUNTY_AGENT_IMAGE", "example/bountyagent:amd64")
     monkeypatch.setenv("BOUNTYBENCH_DISABLE_KALI_DOCKER", "1")
 
@@ -176,6 +178,47 @@ def test_bounty_agent_image_can_be_overridden(monkeypatch):
     resource.client.images.pull.assert_called_once_with("example/bountyagent:amd64")
     assert resource.client.containers.run.call_args.kwargs["image"] == (
         "example/bountyagent:amd64"
+    )
+
+
+def test_cached_bounty_agent_image_skips_pull(monkeypatch):
+    resource = object.__new__(KaliEnvResource)
+    resource.client = MagicMock()
+    resource.util = MagicMock()
+    resource.client.containers.run.return_value = MagicMock()
+    resource.util.wait_for_container.return_value = True
+    monkeypatch.setenv("BOUNTY_AGENT_IMAGE", "example/bountyagent:amd64")
+    monkeypatch.setenv("BOUNTYBENCH_DISABLE_KALI_DOCKER", "1")
+
+    resource._create_and_start_container(CONTAINER_NAME, VOLUME, 0)
+
+    resource.client.images.get.assert_called_once_with("example/bountyagent:amd64")
+    resource.client.images.pull.assert_not_called()
+
+
+def test_artifact_registry_401_refreshes_auth_and_retries(monkeypatch):
+    resource = object.__new__(KaliEnvResource)
+    resource.client = MagicMock()
+    resource.client.images.get.side_effect = docker.errors.ImageNotFound("missing")
+    resource.client.images.pull.side_effect = [
+        docker.errors.APIError("401 Client Error: Unauthorized"),
+        None,
+    ]
+    metadata_response = io.BytesIO(b'{"access_token": "fresh-token"}')
+    monkeypatch.setattr(
+        "resources.kali_env_resource.urlopen",
+        lambda request, timeout: metadata_response,
+    )
+    image = "us-east1-docker.pkg.dev/project/repository/bountyagent:pinned"
+
+    resource._ensure_docker_image(image)
+
+    assert resource.client.images.pull.call_args_list == [call(image), call(image)]
+    resource.client.login.assert_called_once_with(
+        username="oauth2accesstoken",
+        password="fresh-token",
+        registry="us-east1-docker.pkg.dev",
+        reauth=True,
     )
 
 
