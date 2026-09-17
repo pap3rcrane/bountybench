@@ -41,6 +41,12 @@ Dockerfile*
 
 # Logs
 logs/
+full_logs/
+batch_logs/
+runs/
+error_logs/
+generated_objectives/
+environment_timelines/
 *.log
 
 # Test coverage
