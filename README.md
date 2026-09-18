@@ -172,8 +172,8 @@ The available modes are:
 
 - `observe`: runs after the evaluator on every student turn. It sees the original
   benchmark task followed by only student model output, commands, and environment
-  responses. Its response is logged but hidden from the student, and prior teacher
-  observations are not included in later teacher inputs.
+  responses, then places its response in the student's context for the next turn.
+  Prior teacher observations are not included in later teacher inputs.
 - `steer`: receives the same original-task and student-only trace as `observe`, then
   places its response in the student's context for the next turn.
 - `objective_rewrite`: consumes exactly three task-and-student-trace blocks from three

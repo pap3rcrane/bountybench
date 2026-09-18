@@ -157,11 +157,6 @@ class TeacherAgent(BaseAgent):
         return original_task
 
     def _build_user_prompt(self, original_task: str, trace: str) -> str:
-        visibility = (
-            "Your response is private and will not be shown to the student."
-            if self.mode is TeacherMode.OBSERVE
-            else "Your response will be shown to the student before its next turn."
-        )
         if self.system_prompt_placement is TeacherSystemPromptPlacement.SYSTEM:
             return format_teacher_trace(trace)
 
@@ -220,7 +215,7 @@ class TeacherAgent(BaseAgent):
             teacher_action.message,
             "=" * 80,
         )
-        if self.mode is TeacherMode.STEER:
+        if self.mode in (TeacherMode.OBSERVE, TeacherMode.STEER):
             teacher_message.set_message(f"Teacher response:\n{teacher_action.message}")
         return teacher_message
 

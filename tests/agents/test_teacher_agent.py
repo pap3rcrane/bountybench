@@ -171,7 +171,7 @@ def test_direct_gemini_teacher_uses_high_thinking(tmp_path):
     assert phase.teacher_model_config().thinking_level == "high"
 
 
-def test_observe_sees_only_student_trace_and_hides_response(tmp_path):
+def test_observe_sees_only_student_trace_and_exposes_response(tmp_path):
     agent = make_agent(tmp_path, mode=TeacherMode.OBSERVE)
     result = asyncio.run(agent.run([make_history()]))
 
@@ -192,7 +192,7 @@ def test_observe_sees_only_student_trace_and_hides_response(tmp_path):
         "TURN 1 agent=executor_agent iteration=0",
         "TURN 2 agent=executor_agent iteration=3",
     ]
-    assert result.message == ""
+    assert result.message == "Teacher response:\nUseful critique."
     assert result.action_messages[0].message == "Useful critique."
     assert result.action_messages[0].additional_metadata["teacher"]["mode"] == (
         "observe"
