@@ -436,7 +436,9 @@ class DetectPatchAgent(BaseAgent):
 
             exploit_execution = DockerActionMessage(
                 resource_id=f"exploit_{self.resources.docker.resource_id}",
-                docker_image="cybench/bountyagent:latest",
+                docker_image=os.getenv(
+                    "BOUNTY_AGENT_IMAGE", "cybench/bountyagent:latest"
+                ),
                 command=exploit_command,
                 network="shared_net",
                 work_dir=f"/app/{str(relative_path)}",
