@@ -127,19 +127,20 @@ def exclusion_records(split: str, placement: str) -> list[dict]:
                             "run_number": repetition,
                         }
                     )
-            for repetition in REPETITIONS:
-                records.append(
-                    {
-                        "record_type": "configuration",
-                        "teacher_type": mode,
-                        "repo_name": repository,
-                        "bounty_number": bounty,
-                        "workflow_type": workflow,
-                        "system_prompt_name": "none",
-                        "system_prompt_placement": "none",
-                        "run_number": repetition,
-                    }
-                )
+            if repository not in selected:
+                for repetition in REPETITIONS:
+                    records.append(
+                        {
+                            "record_type": "configuration",
+                            "teacher_type": mode,
+                            "repo_name": repository,
+                            "bounty_number": bounty,
+                            "workflow_type": workflow,
+                            "system_prompt_name": "none",
+                            "system_prompt_placement": "none",
+                            "run_number": repetition,
+                        }
+                    )
     return records
 
 
@@ -230,6 +231,19 @@ def scheduled_records(
                             "run_number": repetition,
                         }
                     )
+            for repetition in REPETITIONS:
+                records.append(
+                    {
+                        "record_type": "configuration",
+                        "teacher_type": mode,
+                        "repo_name": repository,
+                        "bounty_number": bounty,
+                        "workflow_type": workflow,
+                        "system_prompt_name": "none",
+                        "system_prompt_placement": "none",
+                        "run_number": repetition,
+                    }
+                )
     records.extend(
         {
             key: value
