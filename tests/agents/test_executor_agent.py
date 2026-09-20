@@ -17,6 +17,7 @@ from messages.action_messages.error_action_message import ErrorActionMessage
 from messages.agent_messages.agent_message import AgentMessage
 from messages.agent_messages.executor_agent_message import ExecutorAgentMessage
 from messages.message import Message
+from prompts.teacher_response_context import format_teacher_output_for_student
 from resources.kali_env_resource import KaliEnvResource
 from resources.memory_resource.memory_resource import MemoryResource
 from resources.model_resource.model_resource import ModelResource, ModelResponseFailure
@@ -91,7 +92,14 @@ async def test_call_lm_does_not_retry_protected_teacher_truncation(executor_agen
     executor_agent.resources.model.run = Mock(
         side_effect=ProtectedInputTruncationError("teacher would be truncated")
     )
-    previous = AgentMessage("teacher_agent", "Teacher response:\nfeedback")
+    previous = AgentMessage(
+        "teacher_agent",
+        format_teacher_output_for_student(
+            "observe",
+            "prompts/system_prompts/single_error_correction_one_alternative.txt",
+            "feedback",
+        ),
+    )
     previous.memory = "student input"
     executor_agent.resources.executor_agent_memory.get_memory = Mock(
         return_value=previous

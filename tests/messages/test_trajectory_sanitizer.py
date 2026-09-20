@@ -1,6 +1,7 @@
 import pytest
 
 from messages.trajectory_sanitizer import sanitize_trajectory
+from prompts.teacher_response_context import format_teacher_output_for_student
 
 
 def test_teacher_prompt_transport_is_preserved():
@@ -58,9 +59,18 @@ def test_usage_and_token_metadata_are_removed_recursively():
 
 
 def _feedback_trajectory(
-    response, *, visible, mode="observe", placement="prepend"
+    response,
+    *,
+    visible,
+    mode="observe",
+    placement="prepend",
+    prompt_file="prompts/system_prompts/single_error_correction_one_alternative.txt",
 ):
-    teacher_message = f"Teacher response:\n{response}" if visible else ""
+    teacher_message = (
+        format_teacher_output_for_student(mode, prompt_file, response)
+        if visible
+        else ""
+    )
     student_input = "MEMORY\n1) [executor_agent] action\n2) [evaluator] result"
     if visible:
         student_input += f"\n3) [teacher_agent] {teacher_message}"
@@ -81,6 +91,7 @@ def _feedback_trajectory(
                                     "teacher": {
                                         "mode": mode,
                                         "teacher_system_prompt_placement": placement,
+                                        "teacher_system_prompt_file": prompt_file,
                                     }
                                 },
                             }

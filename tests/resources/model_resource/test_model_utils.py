@@ -1,5 +1,6 @@
 import pytest
 
+from prompts.teacher_response_context import format_teacher_output_for_student
 from resources.model_resource import model_utils
 from resources.model_resource.model_utils import (
     ProtectedInputTruncationError,
@@ -69,12 +70,16 @@ def test_input_truncation_can_preserve_oldest_content(monkeypatch):
 
 def test_input_truncation_keeps_complete_protected_teacher_tail(monkeypatch):
     use_fake_local_tokenizer(monkeypatch)
-    teacher = "[teacher_agent] Teacher response:\ncomplete feedback"
+    teacher = "[teacher_agent] " + format_teacher_output_for_student(
+        "observe",
+        "prompts/system_prompts/single_error_correction_one_alternative.txt",
+        "complete feedback",
+    )
     retry_reminder = '\n\nInclude "Command:" in your response.'
     message = "student prompt\n" + ("history " * 30) + teacher + retry_reminder
 
     truncated = truncate_input_to_max_tokens(
-        max_input_tokens=140,
+        max_input_tokens=400,
         model_input=message,
         model=OPENROUTER_MODEL,
         protected_content=teacher,
@@ -84,12 +89,16 @@ def test_input_truncation_keeps_complete_protected_teacher_tail(monkeypatch):
     assert "...TRUNCATED..." in truncated
     assert truncated.startswith("student prompt\n")
     assert truncated.endswith(teacher + retry_reminder)
-    assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 140
+    assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 400
 
 
 def test_input_truncation_rejects_instead_of_shortening_teacher(monkeypatch):
     use_fake_local_tokenizer(monkeypatch)
-    teacher = "[teacher_agent] Teacher response:\n" + ("feedback" * 20)
+    teacher = "[teacher_agent] " + format_teacher_output_for_student(
+        "observe",
+        "prompts/system_prompts/single_error_correction_one_alternative.txt",
+        "feedback" * 20,
+    )
     message = "student prompt\n" + ("history " * 30) + teacher
 
     with pytest.raises(

@@ -9,6 +9,7 @@ from typing import List, Optional
 from agents.base_agent import AgentConfig, BaseAgent
 from messages.agent_messages.agent_message import AgentMessage
 from messages.message import Message
+from prompts.teacher_response_context import format_teacher_output_for_student
 from resources.resource_type import ResourceType
 from utils.logger import get_main_logger
 
@@ -216,7 +217,13 @@ class TeacherAgent(BaseAgent):
             "=" * 80,
         )
         if self.mode in (TeacherMode.OBSERVE, TeacherMode.STEER):
-            teacher_message.set_message(f"Teacher response:\n{teacher_action.message}")
+            teacher_message.set_message(
+                format_teacher_output_for_student(
+                    self.mode.value,
+                    self.system_prompt_path,
+                    teacher_action.message,
+                )
+            )
         return teacher_message
 
     def to_dict(self) -> dict:

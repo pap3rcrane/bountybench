@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from prompts.teacher_response_context import format_teacher_output_for_student
+
 
 OMITTED_TRAJECTORY_KEYS = {"workflow_usage", "phase_usage", "resources_used"}
 
@@ -29,6 +31,15 @@ def _teacher_response(agent_message: dict[str, Any]) -> str:
         ):
             return response
     return ""
+
+
+def _teacher_system_prompt_file(agent_message: dict[str, Any]) -> str | None:
+    for action in agent_message.get("action_messages") or []:
+        metadata = action.get("additional_metadata") or {}
+        teacher = metadata.get("teacher") or {}
+        if "teacher_system_prompt_file" in teacher:
+            return teacher["teacher_system_prompt_file"]
+    return None
 
 
 def _next_student_input(
@@ -67,8 +78,12 @@ def _expose_observe_feedback(agent_messages: list[Any]) -> None:
         response = _teacher_response(agent_message)
         if not response:
             continue
-        teacher_message = agent_message.get("message") or (
-            f"Teacher response:\n{response}"
+        teacher_message = agent_message.get(
+            "message"
+        ) or format_teacher_output_for_student(
+            "observe",
+            _teacher_system_prompt_file(agent_message),
+            response,
         )
 
         student_metadata = _next_student_input(agent_messages, index + 1)

@@ -1,6 +1,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from agents.detect_agent.detect_agent import DetectAgent
 from agents.executor_agent.executor_agent import ExecutorAgent
 from agents.teacher_agent import (
@@ -15,6 +17,11 @@ from phases.detect_patch_phase import DetectPatchPhase
 from phases.detect_phase import DetectPhase
 from phases.exploit_phase import ExploitPhase
 from phases.patch_phase import PatchPhase
+from prompts.teacher_response_context import (
+    BASELINE_TEACHER_STUDENT_CONTEXT,
+    TEACHER_STUDENT_CONTEXT,
+    format_teacher_output_for_student,
+)
 from resources.model_resource.model_mapping import get_model_info
 from resources.model_resource.services.service_providers import ServiceProvider
 from resources.resource_type import ResourceType
@@ -73,8 +80,15 @@ def make_agent(
     mode,
     placement=TeacherSystemPromptPlacement.PREPEND,
     response="Useful critique.",
+    prompt_name=None,
 ):
-    prompt = tmp_path / "teacher.txt"
+    if prompt_name is None:
+        prompt_name = (
+            "single_error_correction_one_alternative"
+            if mode is TeacherMode.OBSERVE
+            else "outcome_evaluation"
+        )
+    prompt = tmp_path / f"{prompt_name}.txt"
     prompt.write_text("CUSTOM TEACHER SYSTEM PROMPT")
     agent = TeacherAgent(
         "teacher_agent",
@@ -192,7 +206,9 @@ def test_observe_sees_only_student_trace_and_exposes_response(tmp_path):
         "TURN 1 agent=executor_agent iteration=0",
         "TURN 2 agent=executor_agent iteration=3",
     ]
-    assert result.message == "Teacher response:\nUseful critique."
+    assert result.message == format_teacher_output_for_student(
+        "observe", agent.system_prompt_path, "Useful critique."
+    )
     assert result.action_messages[0].message == "Useful critique."
     assert result.action_messages[0].additional_metadata["teacher"]["mode"] == (
         "observe"
@@ -223,10 +239,11 @@ def test_system_placement_separates_system_prompt_from_user_prompt(tmp_path):
     assert "AVAILABLE TRACE" in teacher_input.memory
 
 
-def test_none_placement_runs_teacher_without_custom_system_prompt(tmp_path):
+@pytest.mark.parametrize("mode", [TeacherMode.OBSERVE, TeacherMode.STEER])
+def test_none_placement_passes_teacher_response_without_custom_prompt(tmp_path, mode):
     agent = make_agent(
         tmp_path,
-        mode=TeacherMode.OBSERVE,
+        mode=mode,
         placement=TeacherSystemPromptPlacement.NONE,
     )
     result = asyncio.run(agent.run([make_history()]))
@@ -235,6 +252,11 @@ def test_none_placement_runs_teacher_without_custom_system_prompt(tmp_path):
     assert teacher_input.system_prompt is None
     assert "CUSTOM TEACHER SYSTEM PROMPT" not in teacher_input.memory
     assert "AVAILABLE TRACE" in teacher_input.memory
+    assert result.message == format_teacher_output_for_student(
+        mode.value, None, "Useful critique."
+    )
+    assert BASELINE_TEACHER_STUDENT_CONTEXT[mode.value] == ""
+    assert result.message == "Useful critique."
     assert (
         result.action_messages[0].additional_metadata["teacher"][
             "teacher_system_prompt_file"
@@ -257,7 +279,26 @@ def test_steer_uses_observe_input_shape_and_exposes_response(tmp_path):
         "TURN 1 agent=executor_agent iteration=0",
         "TURN 2 agent=executor_agent iteration=3",
     ]
-    assert result.message == "Teacher response:\nUseful critique."
+    assert result.message == format_teacher_output_for_student(
+        "steer", agent.system_prompt_path, "Useful critique."
+    )
+
+
+def test_every_matrix_online_teacher_prompt_has_student_context():
+    assert set(TEACHER_STUDENT_CONTEXT["observe"]) == {
+        "single_error_correction_one_alternative",
+        "single_error_correction_multiple_alternatives",
+        "optimizer",
+        "principle_extraction",
+        "student_nudging",
+    }
+    assert set(TEACHER_STUDENT_CONTEXT["steer"]) == {
+        "outcome_evaluation",
+        "teacher_answer_comparison",
+        "comparative_ranking",
+        "reasoning_quality_fidelity",
+        "rubric_based_evaluation",
+    }
 
 
 def test_pending_student_turn_is_evaluated_then_reviewed(tmp_path):

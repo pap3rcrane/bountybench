@@ -6,6 +6,7 @@ from messages.action_messages.action_message import ActionMessage
 from messages.agent_messages.agent_message import AgentMessage
 from messages.phase_messages.phase_message import PhaseMessage
 from messages.workflow_message import WorkflowMessage
+from prompts.teacher_response_context import format_teacher_output_for_student
 from resources.memory_resource.memory_function import MemoryTruncationFunctions
 from resources.memory_resource.memory_resource import (
     MemoryResource,
@@ -32,7 +33,13 @@ def build_teacher_message(response):
     evaluator = AgentMessage("detect_agent", "evaluation", prev=student)
     phase.add_child_message(evaluator)
     teacher = AgentMessage(
-        "teacher_agent", f"Teacher response:\n{response}", prev=evaluator
+        "teacher_agent",
+        format_teacher_output_for_student(
+            "observe",
+            "prompts/system_prompts/single_error_correction_one_alternative.txt",
+            response,
+        ),
+        prev=evaluator,
     )
     phase.add_child_message(teacher)
     return teacher
