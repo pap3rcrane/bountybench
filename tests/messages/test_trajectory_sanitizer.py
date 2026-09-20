@@ -29,6 +29,35 @@ def test_gemini_reasoning_output_is_preserved():
     assert sanitize_trajectory(recorded) == recorded
 
 
+def test_complete_gemini_api_response_is_preserved_including_usage_tokens():
+    api_response = {
+        "type": "google.genai.types.GenerateContentResponse",
+        "serialization": (
+            "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+        ),
+        "available": True,
+        "data": {
+            "response_id": "response-123",
+            "usage_metadata": {
+                "prompt_token_count": 10,
+                "candidates_token_count": 20,
+                "thoughts_token_count": 5,
+                "total_token_count": 35,
+            },
+        },
+    }
+    trajectory = {
+        "additional_metadata": {
+            "gemini_api_response": api_response,
+            "input_tokens": 10,
+        }
+    }
+
+    sanitized = sanitize_trajectory(trajectory)
+
+    assert sanitized == {"additional_metadata": {"gemini_api_response": api_response}}
+
+
 def test_usage_and_token_metadata_are_removed_recursively():
     result = sanitize_trajectory(
         {

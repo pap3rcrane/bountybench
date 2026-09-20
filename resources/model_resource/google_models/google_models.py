@@ -9,6 +9,7 @@ from google.genai import types
 from resources.model_resource.model_provider import ModelProvider
 from resources.model_resource.model_response import (
     ModelResponse,
+    gemini_api_response_output,
     gemini_reasoning_output,
 )
 from utils.logger import get_main_logger
@@ -48,6 +49,27 @@ def _response_text_parts(response) -> tuple[list[str], list[str]]:
         else:
             answer_parts.append(text)
     return answer_parts, thought_parts
+
+
+def _serialize_api_response(response) -> dict:
+    """Serialize every field exposed by the Gemini SDK response model."""
+    response_type = f"{type(response).__module__}.{type(response).__qualname__}"
+    try:
+        data = response.model_dump(
+            mode="json",
+            by_alias=False,
+            exclude_none=False,
+        )
+        if not isinstance(data, dict):
+            raise TypeError("Gemini response model_dump() did not return a dictionary")
+    except Exception as error:
+        logger.warning("Gemini API response serialization failed: %s", error)
+        return gemini_api_response_output(
+            response_type=response_type,
+            data=None,
+            unavailable_reason=f"{type(error).__name__}: {error}",
+        )
+    return gemini_api_response_output(response_type=response_type, data=data)
 
 
 class GoogleModels(ModelProvider):
@@ -184,6 +206,7 @@ class GoogleModels(ModelProvider):
                 or 0
             )
             answer_parts, thought_parts = _response_text_parts(response)
+            api_response = _serialize_api_response(response)
             if answer_parts:
                 response_text = "".join(answer_parts)
             else:
@@ -200,6 +223,7 @@ class GoogleModels(ModelProvider):
                 reasoning_output=(
                     gemini_reasoning_output(thought_parts) if include_thoughts else None
                 ),
+                gemini_api_response=api_response,
             )
         except Exception as e:
             status_code = self._status_code(e)

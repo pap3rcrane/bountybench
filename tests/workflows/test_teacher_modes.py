@@ -172,12 +172,21 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
             resource_id="teacher_model",
             message="Better objective.",
             additional_metadata={
+                "gemini_api_response": {
+                    "type": "google.genai.types.GenerateContentResponse",
+                    "serialization": (
+                        "pydantic.model_dump(mode=json, by_alias=false, "
+                        "exclude_none=false)"
+                    ),
+                    "available": True,
+                    "data": {"response_id": "response-123"},
+                },
                 "reasoning_output": {
                     "type": "gemini_thought_summary",
                     "available": True,
                     "text": "The original objective is underspecified.",
                     "parts": ["The original objective is underspecified."],
-                }
+                },
             },
         )
         result = asyncio.run(
@@ -204,6 +213,14 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
         "available": True,
         "text": "The original objective is underspecified.",
         "parts": ["The original objective is underspecified."],
+    }
+    assert result.teacher_trace["gemini_api_response"] == {
+        "type": "google.genai.types.GenerateContentResponse",
+        "serialization": (
+            "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+        ),
+        "available": True,
+        "data": {"response_id": "response-123"},
     }
     assert "response" not in result.teacher_trace
     assert "objective" not in result.teacher_trace

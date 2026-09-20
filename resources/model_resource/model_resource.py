@@ -14,7 +14,10 @@ from resources.model_resource.anthropic_models.anthropic_models import (
 )
 from resources.model_resource.helm_models.helm_models import HelmModels
 from resources.model_resource.model_provider import ModelProvider
-from resources.model_resource.model_response import gemini_reasoning_output
+from resources.model_resource.model_response import (
+    gemini_api_response_output,
+    gemini_reasoning_output,
+)
 from resources.model_resource.model_utils import truncate_input_to_max_tokens
 from resources.model_resource.services.api_key_service import verify_and_auth_api_key
 from resources.runnable_base_resource import RunnableBaseResource
@@ -260,7 +263,7 @@ class ModelResource(RunnableBaseResource):
             input_message.memory is not None
         ), "Message to model.run() should contain memory."
         model_input = input_message.memory
-        record_gemini_reasoning = (
+        record_gemini_response = (
             self.resource_id == "teacher_model"
             and not self.helm
             and self.model.startswith("google/")
@@ -270,8 +273,15 @@ class ModelResource(RunnableBaseResource):
                 resource_id=self.resource_id,
                 message=input_message.message,
                 additional_metadata=(
-                    {"reasoning_output": gemini_reasoning_output([])}
-                    if record_gemini_reasoning
+                    {
+                        "reasoning_output": gemini_reasoning_output([]),
+                        "gemini_api_response": gemini_api_response_output(
+                            response_type="google.genai.types.GenerateContentResponse",
+                            data=None,
+                            unavailable_reason="mock model; no Gemini API call was made",
+                        ),
+                    }
+                    if record_gemini_response
                     else None
                 ),
                 prev=prev_action_message,
@@ -310,7 +320,7 @@ class ModelResource(RunnableBaseResource):
                 stop_sequences=self.stop_sequences,
                 system_prompt=system_prompt,
                 thinking_level=self.thinking_level,
-                include_thoughts=True if record_gemini_reasoning else None,
+                include_thoughts=True if record_gemini_response else None,
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -320,9 +330,11 @@ class ModelResource(RunnableBaseResource):
                 input=model_input,
             ) from e
 
+        logged_response = model_response.to_dict()
+        logged_response.pop("gemini_api_response", None)
         log_message = "Unparsed LM Response:\n"
         log_message += "\n\n".join(
-            [f"{key}:\n{value}" for key, value in model_response.to_dict().items()]
+            [f"{key}:\n{value}" for key, value in logged_response.items()]
         )
 
         # Log the entire formatted unparsed message
@@ -344,11 +356,20 @@ class ModelResource(RunnableBaseResource):
             metadata["system_prompt"] = system_prompt
         if self.thinking_level is not None:
             metadata["thinking_level"] = self.thinking_level
-        if record_gemini_reasoning:
+        if record_gemini_response:
             metadata["reasoning_output"] = (
                 model_response.reasoning_output
                 if model_response.reasoning_output is not None
                 else gemini_reasoning_output([])
+            )
+            metadata["gemini_api_response"] = (
+                model_response.gemini_api_response
+                if model_response.gemini_api_response is not None
+                else gemini_api_response_output(
+                    response_type="google.genai.types.GenerateContentResponse",
+                    data=None,
+                    unavailable_reason="Gemini provider returned no serialized API response",
+                )
             )
         metadata = (metadata,)
 

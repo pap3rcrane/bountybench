@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from copy import deepcopy
 from typing import Any
 
 from prompts.teacher_response_context import format_teacher_output_for_student
@@ -118,13 +119,18 @@ def sanitize_trajectory(
     if not isinstance(value, dict):
         return value
 
-    sanitized = {
-        key: sanitize_trajectory(
+    sanitized = {}
+    for key, item in value.items():
+        if key in OMITTED_TRAJECTORY_KEYS or "token" in key.lower():
+            continue
+        if key == "gemini_api_response":
+            # This is an intentionally lossless provider-response archive. Keep
+            # its usage/token fields even though ordinary usage metadata is removed.
+            sanitized[key] = deepcopy(item)
+            continue
+        sanitized[key] = sanitize_trajectory(
             item, expose_observe_feedback=expose_observe_feedback
         )
-        for key, item in value.items()
-        if key not in OMITTED_TRAJECTORY_KEYS and "token" not in key.lower()
-    }
     if expose_observe_feedback and isinstance(sanitized.get("agent_messages"), list):
         _expose_observe_feedback(sanitized["agent_messages"])
     return sanitized

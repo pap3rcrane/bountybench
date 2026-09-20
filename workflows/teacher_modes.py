@@ -13,7 +13,10 @@ from agents.teacher_agent import (
 )
 from prompts.prompts import STOP_TOKEN
 from resources.model_resource.model_resource import ModelResource, ModelResourceConfig
-from resources.model_resource.model_response import gemini_reasoning_output
+from resources.model_resource.model_response import (
+    gemini_api_response_output,
+    gemini_reasoning_output,
+)
 from utils.logger import get_main_logger
 
 logger = get_main_logger(__name__)
@@ -201,6 +204,13 @@ async def rewrite_objective(
     reasoning_output = action_metadata.get("reasoning_output")
     if reasoning_output is None and trace_model.startswith("google/"):
         reasoning_output = gemini_reasoning_output([])
+    gemini_api_response = action_metadata.get("gemini_api_response")
+    if gemini_api_response is None and trace_model.startswith("google/"):
+        gemini_api_response = gemini_api_response_output(
+            response_type="google.genai.types.GenerateContentResponse",
+            data=None,
+            unavailable_reason="Gemini provider returned no serialized API response",
+        )
     teacher_trace = {
         "teacher_mode": "objective_rewrite",
         "model": trace_model,
@@ -218,6 +228,8 @@ async def rewrite_objective(
     }
     if reasoning_output is not None:
         teacher_trace["reasoning_output"] = reasoning_output
+    if gemini_api_response is not None:
+        teacher_trace["gemini_api_response"] = gemini_api_response
     return ObjectiveRewriteResult(
         objective=objective,
         teacher_trace=teacher_trace,

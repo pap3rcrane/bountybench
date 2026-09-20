@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock, call, patch
 
@@ -197,6 +198,95 @@ def test_gemini_thought_summaries_are_requested_and_separated_from_answer():
     }
 
 
+def test_gemini_records_complete_json_serializable_sdk_response():
+    response = types.GenerateContentResponse(
+        sdk_http_response=types.HttpResponse(
+            headers={"x-request-id": "request-123"},
+            body='{"responseId":"response-123"}',
+        ),
+        candidates=[
+            types.Candidate(
+                content=types.Content(
+                    role="model",
+                    parts=[
+                        types.Part(
+                            text="Inspect the evidence.",
+                            thought=True,
+                            thought_signature=b"signature",
+                        ),
+                        types.Part(text="Teacher response"),
+                    ],
+                ),
+                finish_reason=types.FinishReason.STOP,
+                index=0,
+                safety_ratings=[
+                    types.SafetyRating(
+                        category=types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                        probability=types.HarmProbability.NEGLIGIBLE,
+                    )
+                ],
+            )
+        ],
+        model_version="gemini-test-version",
+        response_id="response-123",
+        usage_metadata=types.GenerateContentResponseUsageMetadata(
+            prompt_token_count=3,
+            candidates_token_count=4,
+            thoughts_token_count=2,
+            total_token_count=9,
+        ),
+    )
+    client = MagicMock()
+    client.models.generate_content.return_value = response
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+            thinking_level="high",
+            include_thoughts=True,
+        )
+
+    recorded = result.gemini_api_response
+    assert recorded["type"] == "google.genai.types.GenerateContentResponse"
+    assert recorded["serialization"] == (
+        "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+    )
+    assert recorded["available"] is True
+    assert recorded["data"]["response_id"] == "response-123"
+    assert recorded["data"]["model_version"] == "gemini-test-version"
+    assert recorded["data"]["sdk_http_response"] == {
+        "headers": {"x-request-id": "request-123"},
+        "body": '{"responseId":"response-123"}',
+    }
+    candidate = recorded["data"]["candidates"][0]
+    assert candidate["finish_reason"] == "STOP"
+    assert candidate["content"]["parts"][0]["thought"] is True
+    assert candidate["content"]["parts"][0]["thought_signature"] == ("c2lnbmF0dXJl")
+    assert candidate["safety_ratings"][0]["probability"] == "NEGLIGIBLE"
+    assert recorded["data"]["usage_metadata"] == {
+        "cache_tokens_details": None,
+        "cached_content_token_count": None,
+        "candidates_token_count": 4,
+        "candidates_tokens_details": None,
+        "prompt_token_count": 3,
+        "prompt_tokens_details": None,
+        "thoughts_token_count": 2,
+        "tool_use_prompt_token_count": None,
+        "tool_use_prompt_tokens_details": None,
+        "total_token_count": 9,
+        "traffic_type": None,
+    }
+    assert recorded["data"]["prompt_feedback"] is None
+    json.dumps(recorded)
+
+
 def test_gemini_retries_rate_limits_three_times_with_fixed_backoff():
     rate_limit_error = Exception("429 RESOURCE_EXHAUSTED")
     response = MagicMock()
@@ -357,12 +447,21 @@ def test_direct_gemini_reserves_input_headroom_for_tokenizer_differences():
 
 
 def test_model_resource_forwards_high_thinking_level():
+    api_response = {
+        "type": "google.genai.types.GenerateContentResponse",
+        "serialization": (
+            "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+        ),
+        "available": True,
+        "data": {"response_id": "response-123"},
+    }
     provider = MagicMock()
     provider.make_request.return_value = ModelResponse(
         content="Teacher response",
         input_tokens=3,
         output_tokens=4,
         time_taken_in_ms=5,
+        gemini_api_response=api_response,
     )
 
     with (
@@ -388,6 +487,7 @@ def test_model_resource_forwards_high_thinking_level():
         "text": "",
         "parts": [],
     }
+    assert action.additional_metadata["gemini_api_response"] == api_response
 
 
 def test_non_teacher_gemini_does_not_request_or_record_thought_summaries():
@@ -415,6 +515,7 @@ def test_non_teacher_gemini_does_not_request_or_record_thought_summaries():
 
     assert provider.make_request.call_args.kwargs["include_thoughts"] is None
     assert "reasoning_output" not in action.additional_metadata
+    assert "gemini_api_response" not in action.additional_metadata
 
 
 def test_mock_gemini_teacher_records_unavailable_reasoning_output():
@@ -435,4 +536,13 @@ def test_mock_gemini_teacher_records_unavailable_reasoning_output():
         "available": False,
         "text": "",
         "parts": [],
+    }
+    assert action.additional_metadata["gemini_api_response"] == {
+        "type": "google.genai.types.GenerateContentResponse",
+        "serialization": (
+            "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+        ),
+        "available": False,
+        "data": None,
+        "unavailable_reason": "mock model; no Gemini API call was made",
     }

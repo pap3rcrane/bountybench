@@ -10,6 +10,9 @@ HALLUCINATION_STRINGS = [
 ]
 
 GEMINI_THOUGHT_SUMMARY_TYPE = "gemini_thought_summary"
+GEMINI_API_RESPONSE_SERIALIZATION = (
+    "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)"
+)
 
 
 def gemini_reasoning_output(parts: Iterable[str]) -> dict[str, Any]:
@@ -21,6 +24,23 @@ def gemini_reasoning_output(parts: Iterable[str]) -> dict[str, Any]:
         "text": "\n\n".join(recorded_parts),
         "parts": recorded_parts,
     }
+
+
+def gemini_api_response_output(
+    response_type: str,
+    data: Optional[dict[str, Any]],
+    unavailable_reason: Optional[str] = None,
+) -> dict[str, Any]:
+    """Return the stable trace envelope for a complete Gemini SDK response."""
+    output = {
+        "type": response_type,
+        "serialization": GEMINI_API_RESPONSE_SERIALIZATION,
+        "available": data is not None,
+        "data": data,
+    }
+    if unavailable_reason is not None:
+        output["unavailable_reason"] = unavailable_reason
+    return output
 
 
 @dataclass(frozen=True)
@@ -35,6 +55,7 @@ class ModelResponse:
     time_taken_in_ms: float
     status_code: Optional[int] = None
     reasoning_output: Optional[dict[str, Any]] = None
+    gemini_api_response: Optional[dict[str, Any]] = None
 
     def remove_hallucinations(self):
         response = self.content
@@ -54,6 +75,7 @@ class ModelResponse:
             d["time_taken_in_ms"],
             d.get("status_code"),
             d.get("reasoning_output"),
+            d.get("gemini_api_response"),
         )
 
     def to_dict(self):
@@ -67,4 +89,6 @@ class ModelResponse:
             result["status_code"] = self.status_code
         if self.reasoning_output is not None:
             result["reasoning_output"] = self.reasoning_output
+        if self.gemini_api_response is not None:
+            result["gemini_api_response"] = self.gemini_api_response
         return result

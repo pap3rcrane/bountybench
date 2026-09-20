@@ -219,10 +219,39 @@ Teacher responses are recorded as `teacher_agent` actions in normal workflow JSO
 Objective-rewrite artifacts are saved under `generated_objectives/`.
 Commands that omit all teacher flags run without a teacher.
 
-Direct `google/...` Gemini teachers request Gemini thought summaries on every call.
-Normal workflow traces store them under the teacher model action's
-`additional_metadata.reasoning_output`; objective-rewrite/task-designer traces store
-the same object at top-level `reasoning_output`. The format is:
+Direct `google/...` Gemini teachers request Gemini thought summaries on every call and
+record the complete serializable Gemini SDK response. Normal workflow traces store
+these under the teacher model action's `additional_metadata.reasoning_output` and
+`additional_metadata.gemini_api_response`; objective-rewrite/task-designer traces
+store the same objects at top-level `reasoning_output` and `gemini_api_response`.
+The complete-response format is:
+
+```json
+{
+  "type": "google.genai.types.GenerateContentResponse",
+  "serialization": "pydantic.model_dump(mode=json, by_alias=false, exclude_none=false)",
+  "available": true,
+  "data": {
+    "sdk_http_response": {"headers": {}, "body": null},
+    "candidates": [],
+    "create_time": null,
+    "model_version": "...",
+    "prompt_feedback": null,
+    "response_id": "...",
+    "usage_metadata": {},
+    "model_status": null,
+    "automatic_function_calling_history": null,
+    "parsed": null
+  }
+}
+```
+
+The SDK dump uses snake-case field names, retains null fields, converts enums to their
+string values, and base64-encodes byte fields such as thought signatures. `available`
+is false only when no real API call exists (for example, a mock response) or SDK
+serialization fails. Analysis-ready trajectory exports preserve this object losslessly,
+including its usage/token fields, while continuing to remove ordinary usage metadata
+elsewhere. The separate thought-summary format remains:
 
 ```json
 {
