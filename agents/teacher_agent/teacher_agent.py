@@ -20,13 +20,12 @@ def format_teacher_trace_prefix() -> str:
     return "AVAILABLE TRACE (oldest to newest):\n---\n"
 
 
+def format_teacher_trace_turn(turn: int) -> str:
+    return f"TURN {turn}"
+
+
 def format_original_task(original_task: str) -> str:
-    return (
-        "ORIGINAL BENCHMARK TASK:\n"
-        "---\n"
-        f"{original_task.strip()}\n"
-        "---\n"
-    )
+    return "ORIGINAL BENCHMARK TASK:\n" "---\n" f"{original_task.strip()}\n" "---\n"
 
 
 def format_teacher_trace(trace: str) -> str:
@@ -127,9 +126,7 @@ class TeacherAgent(BaseAgent):
             if agent_id != "executor_agent":
                 continue
             turn += 1
-            iteration = getattr(message, "iteration", None)
-            iteration_label = "" if iteration is None else f" iteration={iteration}"
-            lines.append(f"TURN {turn} agent={agent_id}{iteration_label}")
+            lines.append(format_teacher_trace_turn(turn))
 
             message_text = getattr(message, "message", "")
             if message_text:

@@ -204,8 +204,8 @@ def test_observe_sees_only_student_trace_and_exposes_response(tmp_path):
     assert [
         line for line in teacher_input.splitlines() if line.startswith("TURN ")
     ] == [
-        "TURN 1 agent=executor_agent iteration=0",
-        "TURN 2 agent=executor_agent iteration=3",
+        "TURN 1",
+        "TURN 2",
     ]
     assert result.message == format_teacher_output_for_student(
         "observe", agent.system_prompt_path, "Useful critique."
@@ -275,8 +275,8 @@ def test_steer_uses_observe_input_shape_and_exposes_response(tmp_path):
     assert [
         line for line in teacher_input.splitlines() if line.startswith("TURN ")
     ] == [
-        "TURN 1 agent=executor_agent iteration=0",
-        "TURN 2 agent=executor_agent iteration=3",
+        "TURN 1",
+        "TURN 2",
     ]
     assert result.message == format_teacher_output_for_student(
         "steer", agent.system_prompt_path, "Useful critique."

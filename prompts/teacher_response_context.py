@@ -15,13 +15,15 @@ TEACHER_STUDENT_CONTEXT = {
             "The teacher is offering feedback on your latest step. "
             "It identifies a genuine mistake, if any, and provides one corrected "
             "replacement with an explanation. "
-            "Use it as additional context to inform your reasoning and next action."
+            "Use it as additional context to inform your reasoning and next action. "
+            "If the teacher returns PASS, it has no input."
         ),
         "single_error_correction_multiple_alternatives": (
             "The teacher is offering feedback on your latest step. "
             "It identifies a genuine mistake, if any, and presents three distinct "
             "corrective approaches with their tradeoffs. "
-            "Use it as additional context to inform your reasoning and next action."
+            "Use it as additional context to inform your reasoning and next action. "
+            "If the teacher returns PASS, it has no input."
         ),
         "optimizer": (
             "The teacher is offering feedback on your latest step. "
@@ -39,7 +41,8 @@ TEACHER_STUDENT_CONTEXT = {
             "The teacher is offering feedback on your latest step. "
             "It identifies a meaningful issue, if any, and provides progressively "
             "stronger hints without directly giving you the correction. "
-            "Use it as additional context to inform your reasoning and next action."
+            "Use it as additional context to inform your reasoning and next action. "
+            "If the teacher returns PASS, it has no input."
         ),
     },
     "steer": {

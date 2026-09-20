@@ -7,10 +7,7 @@ from typing import Any, Iterable, Optional
 
 from agents.teacher_agent import (
     TeacherSystemPromptPlacement,
-    format_original_task,
-    format_teacher_context,
-    format_teacher_trace,
-    format_teacher_trace_prefix,
+    format_teacher_trace_turn,
 )
 from prompts.prompts import STOP_TOKEN
 from resources.model_resource.model_resource import ModelResource, ModelResourceConfig
@@ -54,9 +51,7 @@ def _compact_source_log(path: Path) -> tuple[str, str]:
             if agent_id != "executor_agent":
                 continue
             turn += 1
-            iteration = message.get("iteration")
-            iteration_label = "" if iteration is None else f" iteration={iteration}"
-            lines.append(f"TURN {turn} agent={agent_id}{iteration_label}")
+            lines.append(format_teacher_trace_turn(turn))
 
             message_text = message.get("message", "")
             if message_text:
@@ -70,6 +65,22 @@ def _compact_source_log(path: Path) -> tuple[str, str]:
     if original_task is None:
         raise ValueError(f"Source log is missing the original benchmark task: {path}")
     return original_task, "\n\n".join(lines)
+
+
+def _format_objective_rewrite_context(runs: list[tuple[str, str]]) -> str:
+    original_task = runs[0][0].strip()
+    if any(task.strip() != original_task for task, _ in runs[1:]):
+        raise ValueError(
+            "objective_rewrite source logs must share the same original benchmark task"
+        )
+
+    sections = [f"ORIGINAL BENCHMARK TASK:\n\n{original_task}"]
+    sections.extend(
+        f"## SOURCE RUN {number}: AVAILABLE TRACE (oldest to newest):\n\n"
+        f"{trace.strip()}"
+        for number, (_, trace) in enumerate(runs, start=1)
+    )
+    return "\n\n".join(sections)
 
 
 def build_objective_rewrite_input(
@@ -91,46 +102,35 @@ def build_objective_rewrite_input(
             "Teacher system prompt file is required for prepend and system placement"
         )
     runs = [_compact_source_log(path) for path in source_logs]
+    user_context = _format_objective_rewrite_context(runs)
     if system_prompt_placement is TeacherSystemPromptPlacement.PREPEND:
         assert system_prompt_file is not None
         custom_prompt = system_prompt_file.read_text().strip()
-        user_runs = "\n\n".join(
-            f"SOURCE RUN {number}:\n{format_teacher_context(task, trace)}"
-            for number, (task, trace) in enumerate(runs, start=1)
-        )
         return _ObjectiveRewriteInput(
-            memory=f"{custom_prompt}\n\n{user_runs}",
+            memory=f"{custom_prompt}\n\n{user_context}",
             required_memory_prefix=(
-                f"{custom_prompt}\n\nSOURCE RUN 1:\n"
-                f"{format_original_task(runs[0][0])}\n"
-                f"{format_teacher_trace_prefix()}"
+                f"{custom_prompt}\n\nORIGINAL BENCHMARK TASK:\n\n"
+                f"{runs[0][0].strip()}\n\n"
+                "## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):\n\n"
             ),
         )
 
     if system_prompt_placement is TeacherSystemPromptPlacement.SYSTEM:
         assert system_prompt_file is not None
-        user_runs = "\n\n".join(
-            f"SOURCE RUN {number}:\n{format_teacher_context(task, trace)}"
-            for number, (task, trace) in enumerate(runs, start=1)
-        )
         return _ObjectiveRewriteInput(
-            memory=user_runs,
+            memory=user_context,
             system_prompt=system_prompt_file.read_text().strip(),
             required_memory_prefix=(
-                f"SOURCE RUN 1:\n{format_original_task(runs[0][0])}\n"
-                f"{format_teacher_trace_prefix()}"
+                f"ORIGINAL BENCHMARK TASK:\n\n{runs[0][0].strip()}\n\n"
+                "## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):\n\n"
             ),
         )
 
-    user_runs = "\n\n".join(
-        f"SOURCE RUN {number}:\n{format_teacher_context(task, trace)}"
-        for number, (task, trace) in enumerate(runs, start=1)
-    )
     return _ObjectiveRewriteInput(
-        memory=user_runs,
+        memory=user_context,
         required_memory_prefix=(
-            f"SOURCE RUN 1:\n{format_original_task(runs[0][0])}\n"
-            f"{format_teacher_trace_prefix()}"
+            f"ORIGINAL BENCHMARK TASK:\n\n{runs[0][0].strip()}\n\n"
+            "## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):\n\n"
         ),
     )
 
@@ -263,9 +263,7 @@ def write_objective(
     return output_path
 
 
-def write_teacher_trace(
-    *, teacher_trace: dict[str, Any], objective_path: Path
-) -> Path:
+def write_teacher_trace(*, teacher_trace: dict[str, Any], objective_path: Path) -> Path:
     suffix = "_objective.json"
     trace_name = (
         objective_path.name[: -len(suffix)] + "_teacher_trace.json"

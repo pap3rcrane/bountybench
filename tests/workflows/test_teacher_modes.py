@@ -30,7 +30,7 @@ OBJECTIVE_RESPONSE_FORMAT = (
 )
 
 
-def _source_log(path, command):
+def _source_log(path, command, original_task="Original benchmark task"):
     path.write_text(
         json.dumps(
             {
@@ -43,7 +43,7 @@ def _source_log(path, command):
                         "agent_messages": [
                             {
                                 "agent_id": "system",
-                                "message": f"Original task for {command}",
+                                "message": original_task,
                             },
                             {
                                 "agent_id": "executor_agent",
@@ -110,9 +110,12 @@ def test_objective_input_uses_three_logs_and_removes_old_teacher_turns(tmp_path)
     contents = model_input.memory
 
     assert model_input.system_prompt is None
-    assert contents.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert contents.count("ORIGINAL BENCHMARK TASK:") == 1
     assert contents.count("AVAILABLE TRACE (oldest to newest):") == 3
-    assert contents.count("TURN 1 agent=executor_agent") == 3
+    assert contents.count("## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):") == 1
+    assert contents.count("## SOURCE RUN 2: AVAILABLE TRACE (oldest to newest):") == 1
+    assert contents.count("## SOURCE RUN 3: AVAILABLE TRACE (oldest to newest):") == 1
+    assert contents.splitlines().count("TURN 1") == 3
     assert "TURN 2 " not in contents
     assert "command-0" in contents
     assert "command-1" in contents
@@ -120,6 +123,13 @@ def test_objective_input_uses_three_logs_and_removes_old_teacher_turns(tmp_path)
     assert "must not be reused" not in contents
     assert "evaluator must not be reused" not in contents
     assert OBJECTIVE_RESPONSE_FORMAT in contents
+    assert contents.startswith(
+        f"{prompt.read_text().strip()}\n\n"
+        "ORIGINAL BENCHMARK TASK:\n\n"
+        "Original benchmark task\n\n"
+        "## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):\n\n"
+        "TURN 1"
+    )
 
 
 def test_objective_system_placement_keeps_system_prompt_out_of_user_input(tmp_path):
@@ -136,8 +146,14 @@ def test_objective_system_placement_keeps_system_prompt_out_of_user_input(tmp_pa
     )
 
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory
-    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 1
     assert model_input.memory.count("AVAILABLE TRACE (oldest to newest):") == 3
+    assert model_input.memory.startswith(
+        "ORIGINAL BENCHMARK TASK:\n\n"
+        "Original benchmark task\n\n"
+        "## SOURCE RUN 1: AVAILABLE TRACE (oldest to newest):\n\n"
+        "TURN 1"
+    )
     assert model_input.system_prompt == prompt.read_text().strip()
     assert "ORIGINAL BENCHMARK TASK:" not in model_input.system_prompt
 
@@ -154,8 +170,23 @@ def test_objective_none_placement_needs_no_system_prompt_file(tmp_path):
     )
 
     assert model_input.system_prompt is None
-    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 1
     assert model_input.memory.count("AVAILABLE TRACE (oldest to newest):") == 3
+
+
+def test_objective_source_logs_must_share_original_task(tmp_path):
+    logs = []
+    for number in range(3):
+        path = tmp_path / f"run-{number}.json"
+        _source_log(
+            path,
+            f"Command: command-{number}",
+            original_task=f"Original benchmark task {number}",
+        )
+        logs.append(path)
+
+    with pytest.raises(ValueError, match="share the same original benchmark task"):
+        build_objective_rewrite_input(None, TeacherSystemPromptPlacement.NONE, logs)
 
 
 def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
@@ -230,7 +261,7 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
     assert model_config.timeout == 900.0
     assert model_input.system_prompt == prompt.read_text().strip()
     assert "ORIGINAL BENCHMARK TASK:" not in model_input.system_prompt
-    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 1
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory
 
 
@@ -401,9 +432,7 @@ def test_generated_sources_are_followed_by_teacher_objective_only(tmp_path):
 
     assert len(FakeWorkflow.instances) == 3
     assert all("teacher_mode" not in run.kwargs for run in FakeWorkflow.instances)
-    assert all(
-        "objective_override" not in run.kwargs for run in FakeWorkflow.instances
-    )
+    assert all("objective_override" not in run.kwargs for run in FakeWorkflow.instances)
     assert len(rewrite.await_args.kwargs["source_logs"]) == 3
     assert rewrite.await_args.kwargs["system_prompt_placement"] is (
         TeacherSystemPromptPlacement.PREPEND

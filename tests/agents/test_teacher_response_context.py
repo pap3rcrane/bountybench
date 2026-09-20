@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from messages.action_messages.action_message import ActionMessage
@@ -6,6 +9,7 @@ from messages.phase_messages.phase_message import PhaseMessage
 from messages.workflow_message import WorkflowMessage
 from prompts.teacher_response_context import (
     BASELINE_TEACHER_STUDENT_CONTEXT,
+    TEACHER_STUDENT_CONTEXT,
     format_teacher_output_for_student,
 )
 from resources.memory_resource.memory_function import MemoryTruncationFunctions
@@ -13,6 +17,26 @@ from resources.memory_resource.memory_resource import (
     MemoryResource,
     MemoryResourceConfig,
 )
+
+
+PASS_NO_INPUT_CONTEXT = "If the teacher returns PASS, it has no input."
+
+
+def test_pass_system_prompts_append_no_input_context():
+    prompt_dir = Path(__file__).resolve().parents[2] / "prompts" / "system_prompts"
+    pass_prompt_names = {
+        prompt_path.stem
+        for prompt_path in prompt_dir.glob("*.txt")
+        if re.search(r"\bPASS\b", prompt_path.read_text())
+    }
+    prefixed_prompt_names = {
+        prompt_name
+        for mode_contexts in TEACHER_STUDENT_CONTEXT.values()
+        for prompt_name, context in mode_contexts.items()
+        if context.endswith(PASS_NO_INPUT_CONTEXT)
+    }
+
+    assert pass_prompt_names == prefixed_prompt_names
 
 
 @pytest.mark.parametrize("mode", ["observe", "steer"])
