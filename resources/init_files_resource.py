@@ -205,7 +205,7 @@ class InitFilesResource(BaseResource):
                     text=True,
                 )
 
-            git_checkout(self.files_dir, self.vulnerable_commit, force=True)
+            self._checkout_vulnerable_commit()
 
             tmp_destination_path = self.tmp_dir / self.files_dir_name
             ignore_git = False  # TODO: make this as a flag in the future
@@ -221,6 +221,41 @@ class InitFilesResource(BaseResource):
         git_setup_dev_branch(self.files_dir, self.vulnerable_commit)
         if ignore_git:
             git_init_repo(tmp_destination_path)
+
+    def _checkout_vulnerable_commit(self) -> None:
+        """Checkout the pinned revision, fetching only that revision if absent."""
+        try:
+            git_checkout(self.files_dir, self.vulnerable_commit, force=True)
+            return
+        except subprocess.CalledProcessError:
+            logger.warning(
+                "Pinned revision %s is not available locally; fetching it from origin.",
+                self.vulnerable_commit,
+            )
+
+        subprocess.run(
+            [
+                "git",
+                "fetch",
+                "--depth",
+                "1",
+                "origin",
+                self.vulnerable_commit,
+            ],
+            cwd=self.files_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        fetched_commit = subprocess.run(
+            ["git", "rev-parse", "FETCH_HEAD"],
+            cwd=self.files_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        self.vulnerable_commit = fetched_commit
+        git_checkout(self.files_dir, fetched_commit, force=True)
 
     def stop(self) -> None:
         """

@@ -1,5 +1,6 @@
 import os
 import signal
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Optional
@@ -17,6 +18,10 @@ from resources.model_resource.services.service_providers import PROVIDER_CONFIG
 @contextmanager
 def _temporary_sigint_handler():
     """Temporarily restore default SIGINT handler so Ctrl+C interrupts input()."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
     original_handler = signal.getsignal(signal.SIGINT)
     try:
         signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -31,6 +36,8 @@ def _prompt_input(prompt_text: str) -> str:
             return input(prompt_text).strip()
         except KeyboardInterrupt:
             raise RuntimeError("API Key input interrupted by user.")
+        except EOFError:
+            raise RuntimeError("API Key input is unavailable in this non-interactive run.")
 
 
 def _api_key_lookup(model_name: str, helm: bool) -> str:

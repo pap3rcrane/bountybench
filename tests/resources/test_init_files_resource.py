@@ -3,6 +3,7 @@ import shutil
 import stat
 import subprocess
 from pathlib import Path
+from unittest.mock import call, patch
 
 import pytest
 
@@ -120,6 +121,40 @@ def test_stop(resource, setup_dirs):
         ["git", "branch"], cwd=original_files_dir, stdout=subprocess.PIPE, text=True
     )
     assert "dev" not in branch_result.stdout, "Branch 'dev' was not removed."
+
+
+def test_checkout_fetches_missing_vulnerable_commit(tmp_path):
+    resource = InitFilesResource.__new__(InitFilesResource)
+    resource.files_dir = tmp_path
+    resource.vulnerable_commit = "v1.2.3"
+    missing_ref = subprocess.CalledProcessError(1, ["git", "checkout"])
+
+    with (
+        patch(
+            "resources.init_files_resource.git_checkout",
+            side_effect=[missing_ref, None],
+        ) as checkout,
+        patch("resources.init_files_resource.subprocess.run") as run,
+    ):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout=""),
+            subprocess.CompletedProcess([], 0, stdout="abc123\n"),
+        ]
+        resource._checkout_vulnerable_commit()
+
+    assert resource.vulnerable_commit == "abc123"
+    assert checkout.call_args_list == [
+        call(tmp_path, "v1.2.3", force=True),
+        call(tmp_path, "abc123", force=True),
+    ]
+    assert run.call_args_list[0].args[0] == [
+        "git",
+        "fetch",
+        "--depth",
+        "1",
+        "origin",
+        "v1.2.3",
+    ]
 
 
 def test_remove_tmp(resource, setup_dirs):

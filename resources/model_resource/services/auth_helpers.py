@@ -159,6 +159,10 @@ def _auth_google_api_key(
     params = {"key": api_key}
 
     response = requests.get(url, params=params)
+    # A quota response identifies an authenticated Google Cloud consumer. Treat
+    # the key as valid here and let the model-request retry policy handle 429s.
+    if response.status_code == 429:
+        return True, ""
     if response.status_code == 200:
         try:
             if not verify_model or model_name is None:

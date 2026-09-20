@@ -1,5 +1,6 @@
 import os
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from typing import Tuple
@@ -8,7 +9,10 @@ from unittest.mock import MagicMock, patch
 import dotenv
 
 from resources.model_resource.model_mapping import HelmModelInfo, NonHelmModelInfo
-from resources.model_resource.services.api_key_service import verify_and_auth_api_key
+from resources.model_resource.services.api_key_service import (
+    _temporary_sigint_handler,
+    verify_and_auth_api_key,
+)
 from resources.model_resource.services.service_providers import ServiceProvider
 
 # Create a temporary .env file for testing
@@ -104,6 +108,22 @@ class TestApiKeyService(unittest.TestCase):
             )
 
             mock_set_key.assert_not_called()
+
+    def test_sigint_context_is_safe_in_worker_thread(self):
+        errors = []
+
+        def enter_context():
+            try:
+                with _temporary_sigint_handler():
+                    pass
+            except Exception as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=enter_context)
+        worker.start()
+        worker.join()
+
+        self.assertEqual(errors, [])
 
     def test_invalid_key_flow(self):
         """
