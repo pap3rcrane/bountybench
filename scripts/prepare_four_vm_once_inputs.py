@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prepare four VM input bundles for the one-repeat teacher split."""
+"""Prepare four VM input bundles for the five-repeat teacher split."""
 
 from __future__ import annotations
 
@@ -95,6 +95,8 @@ TASK_WORKFLOWS = {
     "undici": "patch_workflow",
 }
 
+REPETITIONS = range(1, 6)
+
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -110,8 +112,8 @@ def exclusion_records(split: str, placement: str) -> list[dict]:
         selected = SPLITS[split][mode]
         for repository, bounty, workflow in ENVIRONMENTS[mode]:
             for prompt in PROMPTS[mode]:
-                for repetition in range(1, 6):
-                    if repository in selected and repetition == 1:
+                for repetition in REPETITIONS:
+                    if repository in selected:
                         continue
                     records.append(
                         {
@@ -125,7 +127,7 @@ def exclusion_records(split: str, placement: str) -> list[dict]:
                             "run_number": repetition,
                         }
                     )
-            for repetition in range(1, 6):
+            for repetition in REPETITIONS:
                 records.append(
                     {
                         "record_type": "configuration",
@@ -163,37 +165,79 @@ def task_plan(
                 bundle_root / "sources" / environment_name / configuration_name
             )
             destination_directory.mkdir(parents=True, exist_ok=True)
-            relative_logs = []
-            for source_number in range(1, 4):
-                source = source_directory / f"run1_source_{source_number}.json"
-                if not source.is_file():
-                    raise FileNotFoundError(f"Missing source trace: {source}")
-                destination = destination_directory / source.name
-                shutil.copy2(source, destination)
-                relative_logs.append(
-                    str(
-                        Path("matrix_inputs")
-                        / bundle_name
-                        / "sources"
-                        / environment_name
-                        / configuration_name
-                        / source.name
+            for repetition in REPETITIONS:
+                relative_logs = []
+                for source_number in range(1, 4):
+                    source = (
+                        source_directory
+                        / f"run{repetition}_source_{source_number}.json"
                     )
+                    if not source.is_file():
+                        raise FileNotFoundError(f"Missing source trace: {source}")
+                    destination = destination_directory / source.name
+                    shutil.copy2(source, destination)
+                    relative_logs.append(
+                        str(
+                            Path("matrix_inputs")
+                            / bundle_name
+                            / "sources"
+                            / environment_name
+                            / configuration_name
+                            / source.name
+                        )
+                    )
+                records.append(
+                    {
+                        "record_type": "configuration",
+                        "teacher_type": "objective_rewrite",
+                        "repo_name": repository,
+                        "bounty_number": "0",
+                        "workflow_type": workflow,
+                        "system_prompt_name": prompt,
+                        "system_prompt_placement": saved_placement,
+                        "run_number": repetition,
+                        "system_prompt_file": (
+                            f"prompts/system_prompts/{prompt}.txt"
+                        ),
+                        "source_logs": relative_logs,
+                    }
                 )
-            records.append(
-                {
-                    "record_type": "configuration",
-                    "teacher_type": "objective_rewrite",
-                    "repo_name": repository,
-                    "bounty_number": "0",
-                    "workflow_type": workflow,
-                    "system_prompt_name": prompt,
-                    "system_prompt_placement": saved_placement,
-                    "run_number": 1,
-                    "system_prompt_file": f"prompts/system_prompts/{prompt}.txt",
-                    "source_logs": relative_logs,
-                }
-            )
+    return records
+
+
+def scheduled_records(
+    *, split: str, placement: str, task_records: list[dict]
+) -> list[dict]:
+    """Describe every final configuration that the VM is expected to execute."""
+    records = []
+    saved_placement = "prepend" if placement == "user" else "system"
+    for mode in ("observe", "steer"):
+        selected = SPLITS[split][mode]
+        for repository, bounty, workflow in ENVIRONMENTS[mode]:
+            if repository not in selected:
+                continue
+            for prompt in PROMPTS[mode]:
+                for repetition in REPETITIONS:
+                    records.append(
+                        {
+                            "record_type": "configuration",
+                            "teacher_type": mode,
+                            "repo_name": repository,
+                            "bounty_number": bounty,
+                            "workflow_type": workflow,
+                            "system_prompt_name": prompt,
+                            "system_prompt_placement": saved_placement,
+                            "run_number": repetition,
+                        }
+                    )
+    records.extend(
+        {
+            key: value
+            for key, value in record.items()
+            if key not in {"source_logs", "system_prompt_file"}
+        }
+        for record in task_records
+    )
     return records
 
 
@@ -242,15 +286,22 @@ def main() -> int:
             split=split,
             placement=placement,
         )
+        scheduled = scheduled_records(
+            split=split,
+            placement=placement,
+            task_records=plan,
+        )
         write_jsonl(bundle_root / "exclude.jsonl", exclusions)
         write_jsonl(bundle_root / "task_designer_plan.jsonl", plan)
+        write_jsonl(bundle_root / "scheduled_configurations.jsonl", scheduled)
 
         archive = bundles_root / f"{bundle_name}_inputs.tar.gz"
         with tarfile.open(archive, "w:gz", compresslevel=1) as tar:
             tar.add(bundle_root, arcname=f"matrix_inputs/{bundle_name}")
         print(
             f"{archive}: {len(exclusions)} exclusions, "
-            f"{len(plan)} Task Designer configurations"
+            f"{len(plan)} Task Designer configurations, "
+            f"{len(scheduled)} total scheduled configurations"
         )
 
     shutil.rmtree(output_root / "staging")
