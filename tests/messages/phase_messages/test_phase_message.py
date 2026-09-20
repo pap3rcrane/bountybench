@@ -267,7 +267,7 @@ def test_calculate_total_usages_ignores_malformed_values_independently():
 def test_to_log_dict(mocker):
     """
     Test the to_log_dict method for PhaseMessage.
-    Ensures that it includes agent messages and token usage information.
+    Ensures that it includes agent messages without usage accounting.
     """
     # Mock agent_messages property
     mock_agent_messages = mocker.patch.object(
@@ -316,11 +316,5 @@ def test_to_log_dict(mocker):
     # Verify parent class log data
     assert result_dict["super_key"] == "super_value"
 
-    # Verify token usage information is included
-    assert "phase_usage" in result_dict
-    assert result_dict["phase_usage"] == {
-        INPUT_TOKEN: 500,
-        OUTPUT_TOKEN: 250,
-        QUERY_TIME_TAKEN_IN_MS: 1000,
-        TOTAL_ITERATION_TIME_MS: 1500,
-    }
+    # Usage accounting is internal and is not included in trajectories.
+    assert "phase_usage" not in result_dict

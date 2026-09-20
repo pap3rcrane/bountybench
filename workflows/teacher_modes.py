@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional
 
 from agents.teacher_agent import (
     TeacherSystemPromptPlacement,
@@ -13,6 +13,7 @@ from agents.teacher_agent import (
 )
 from prompts.prompts import STOP_TOKEN
 from resources.model_resource.model_resource import ModelResource, ModelResourceConfig
+from resources.model_resource.model_response import gemini_reasoning_output
 from utils.logger import get_main_logger
 
 logger = get_main_logger(__name__)
@@ -24,6 +25,12 @@ class _ObjectiveRewriteInput:
     memory: str
     system_prompt: Optional[str] = None
     message: str = "Mock rewritten objective."
+
+
+@dataclass
+class ObjectiveRewriteResult:
+    objective: str
+    teacher_trace: dict[str, Any]
 
 
 def _compact_source_log(path: Path) -> tuple[str, str]:
@@ -152,7 +159,8 @@ async def rewrite_objective(
     max_input_tokens: int,
     max_output_tokens: int,
     temperature: float,
-) -> str:
+) -> ObjectiveRewriteResult:
+    source_logs = list(source_logs)
     system_prompt_placement = TeacherSystemPromptPlacement(system_prompt_placement)
     model_input = build_objective_rewrite_input(
         system_prompt_file, system_prompt_placement, source_logs
@@ -187,7 +195,33 @@ async def rewrite_objective(
         action.message,
         "=" * 80,
     )
-    return parse_objective_response(action.message)
+    objective = parse_objective_response(action.message)
+    action_metadata = action.additional_metadata or {}
+    trace_model = action_metadata.get("model", model)
+    reasoning_output = action_metadata.get("reasoning_output")
+    if reasoning_output is None and trace_model.startswith("google/"):
+        reasoning_output = gemini_reasoning_output([])
+    teacher_trace = {
+        "teacher_mode": "objective_rewrite",
+        "model": trace_model,
+        "system_prompt_placement": system_prompt_placement.value,
+        "system_prompt": action_metadata.get(
+            "system_prompt", model_input.system_prompt
+        ),
+        "input": action_metadata.get("input", model_input.memory),
+        "raw_response": action_metadata.get("raw_output", action.message),
+        "temperature": action_metadata.get("temperature", temperature),
+        "thinking_level": action_metadata.get(
+            "thinking_level", "high" if model.startswith("google/") else None
+        ),
+        "source_logs": [str(path) for path in source_logs],
+    }
+    if reasoning_output is not None:
+        teacher_trace["reasoning_output"] = reasoning_output
+    return ObjectiveRewriteResult(
+        objective=objective,
+        teacher_trace=teacher_trace,
+    )
 
 
 def write_objective(
@@ -205,3 +239,17 @@ def write_objective(
     )
     output_path.write_text(json.dumps({"objective": objective}, indent=2) + "\n")
     return output_path
+
+
+def write_teacher_trace(
+    *, teacher_trace: dict[str, Any], objective_path: Path
+) -> Path:
+    suffix = "_objective.json"
+    trace_name = (
+        objective_path.name[: -len(suffix)] + "_teacher_trace.json"
+        if objective_path.name.endswith(suffix)
+        else objective_path.stem + "_teacher_trace.json"
+    )
+    trace_path = objective_path.with_name(trace_name)
+    trace_path.write_text(json.dumps(teacher_trace, indent=2) + "\n")
+    return trace_path

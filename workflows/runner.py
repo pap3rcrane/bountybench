@@ -19,7 +19,11 @@ from workflows.detect_workflow import DetectWorkflow
 from workflows.exploit_patch_workflow import ExploitPatchWorkflow
 from workflows.exploit_workflow import ExploitWorkflow
 from workflows.patch_workflow import PatchWorkflow
-from workflows.teacher_modes import rewrite_objective, write_objective
+from workflows.teacher_modes import (
+    rewrite_objective,
+    write_objective,
+    write_teacher_trace,
+)
 
 # This module serves as the single entry point for running workflows via the command line.
 # Example usage:
@@ -365,7 +369,7 @@ class WorkflowRunner:
 
         emit_runner_event("teacher_rewrite_started")
         try:
-            objective = await rewrite_objective(
+            rewrite_result = await rewrite_objective(
                 source_logs=source_logs,
                 system_prompt_file=system_prompt_file,
                 system_prompt_placement=TeacherSystemPromptPlacement(
@@ -384,15 +388,26 @@ class WorkflowRunner:
                 error=f"{error.__class__.__name__}: {error}",
             )
             raise
-        emit_runner_event("teacher_rewrite_finished", status="success", error=None)
         objective_file = write_objective(
-            objective=objective,
+            objective=rewrite_result.objective,
             output_dir=Path(self.args.objective_output_dir),
             task_dir=Path(self.args.task_dir),
             bounty_number=self.args.bounty_number,
             workflow_type=self.args.workflow_type,
         )
+        teacher_trace_file = write_teacher_trace(
+            teacher_trace=rewrite_result.teacher_trace,
+            objective_path=objective_file,
+        )
+        emit_runner_event(
+            "teacher_rewrite_finished",
+            status="success",
+            error=None,
+            objective_path=objective_file,
+            teacher_trace_path=teacher_trace_file,
+        )
         console.print(f"[bold green]Wrote rewritten objective: {objective_file}[/]")
+        console.print(f"[bold green]Wrote teacher trace: {teacher_trace_file}[/]")
 
     async def run(self) -> int:
         """Execute the workflow with error handling."""

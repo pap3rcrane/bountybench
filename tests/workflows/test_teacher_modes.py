@@ -171,8 +171,16 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
         model_resource.return_value.run.return_value = ActionMessage(
             resource_id="teacher_model",
             message="Better objective.",
+            additional_metadata={
+                "reasoning_output": {
+                    "type": "gemini_thought_summary",
+                    "available": True,
+                    "text": "The original objective is underspecified.",
+                    "parts": ["The original objective is underspecified."],
+                }
+            },
         )
-        objective = asyncio.run(
+        result = asyncio.run(
             rewrite_objective(
                 source_logs=logs,
                 system_prompt_file=prompt,
@@ -187,7 +195,18 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
 
     model_input = model_resource.return_value.run.call_args.args[0]
     model_config = model_resource.call_args.args[1]
-    assert objective == "Better objective."
+    assert result.objective == "Better objective."
+    assert result.teacher_trace["input"] == model_input.memory
+    assert result.teacher_trace["system_prompt"] == model_input.system_prompt
+    assert result.teacher_trace["raw_response"] == "Better objective."
+    assert result.teacher_trace["reasoning_output"] == {
+        "type": "gemini_thought_summary",
+        "available": True,
+        "text": "The original objective is underspecified.",
+        "parts": ["The original objective is underspecified."],
+    }
+    assert "response" not in result.teacher_trace
+    assert "objective" not in result.teacher_trace
     assert model_config.preserve_oldest_input is True
     assert model_config.thinking_level == "high"
     assert model_config.timeout == 900.0
@@ -350,7 +369,12 @@ def test_generated_sources_are_followed_by_teacher_objective_only(tmp_path):
     with (
         patch(
             "workflows.runner.rewrite_objective",
-            AsyncMock(return_value="Rewritten objective"),
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    objective="Rewritten objective",
+                    teacher_trace={"response": "Rewritten objective"},
+                )
+            ),
         ) as rewrite,
         patch("workflows.runner.write_objective", return_value=objective_file),
     ):

@@ -148,6 +148,55 @@ def test_gemini_high_thinking_is_passed_in_generation_config():
     assert config.thinking_config.thinking_level is types.ThinkingLevel.HIGH
 
 
+def test_gemini_thought_summaries_are_requested_and_separated_from_answer():
+    response = SimpleNamespace(
+        text="SDK fallback text",
+        candidates=[
+            SimpleNamespace(
+                content=SimpleNamespace(
+                    parts=[
+                        SimpleNamespace(text="First inspect the trace.", thought=True),
+                        SimpleNamespace(
+                            text="Then compare the evidence.", thought=True
+                        ),
+                        SimpleNamespace(text="Teacher response", thought=False),
+                    ]
+                )
+            )
+        ],
+        usage_metadata=SimpleNamespace(
+            prompt_token_count=3,
+            candidates_token_count=4,
+        ),
+    )
+    client = MagicMock()
+    client.models.generate_content.return_value = response
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+            thinking_level="high",
+            include_thoughts=True,
+        )
+
+    config = client.models.generate_content.call_args.kwargs["config"]
+    assert config.thinking_config.include_thoughts is True
+    assert result.content == "Teacher response"
+    assert result.reasoning_output == {
+        "type": "gemini_thought_summary",
+        "available": True,
+        "text": "First inspect the trace.\n\nThen compare the evidence.",
+        "parts": ["First inspect the trace.", "Then compare the evidence."],
+    }
+
+
 def test_gemini_retries_rate_limits_three_times_with_fixed_backoff():
     rate_limit_error = Exception("429 RESOURCE_EXHAUSTED")
     response = MagicMock()
@@ -276,6 +325,7 @@ def test_model_resource_forwards_separate_gemini_system_prompt():
     assert action.additional_metadata["system_prompt"] == (
         "CUSTOM TEACHER SYSTEM PROMPT"
     )
+    assert not any("token" in key for key in action.additional_metadata)
 
 
 def test_direct_gemini_reserves_input_headroom_for_tokenizer_differences():
@@ -330,4 +380,59 @@ def test_model_resource_forwards_high_thinking_level():
         action = resource.run(SimpleNamespace(memory="USER MESSAGE"))
 
     assert provider.make_request.call_args.kwargs["thinking_level"] == "high"
+    assert provider.make_request.call_args.kwargs["include_thoughts"] is True
     assert action.additional_metadata["thinking_level"] == "high"
+    assert action.additional_metadata["reasoning_output"] == {
+        "type": "gemini_thought_summary",
+        "available": False,
+        "text": "",
+        "parts": [],
+    }
+
+
+def test_non_teacher_gemini_does_not_request_or_record_thought_summaries():
+    provider = MagicMock()
+    provider.make_request.return_value = ModelResponse(
+        content="Student response",
+        input_tokens=3,
+        output_tokens=4,
+        time_taken_in_ms=5,
+    )
+
+    with (
+        patch("resources.model_resource.model_resource.verify_and_auth_api_key"),
+        patch.object(ModelResource, "get_model_provider", return_value=provider),
+        patch(
+            "resources.model_resource.model_resource.truncate_input_to_max_tokens",
+            return_value="USER MESSAGE",
+        ),
+    ):
+        resource = ModelResource(
+            "model",
+            ModelResourceConfig(model="google/gemini-3.6-flash"),
+        )
+        action = resource.run(SimpleNamespace(memory="USER MESSAGE"))
+
+    assert provider.make_request.call_args.kwargs["include_thoughts"] is None
+    assert "reasoning_output" not in action.additional_metadata
+
+
+def test_mock_gemini_teacher_records_unavailable_reasoning_output():
+    resource = ModelResource(
+        "teacher_model",
+        ModelResourceConfig(
+            model="google/gemini-3.6-flash",
+            use_mock_model=True,
+        ),
+    )
+
+    action = resource.run(
+        SimpleNamespace(memory="USER MESSAGE", message="Mock teacher response")
+    )
+
+    assert action.additional_metadata["reasoning_output"] == {
+        "type": "gemini_thought_summary",
+        "available": False,
+        "text": "",
+        "parts": [],
+    }

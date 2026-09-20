@@ -201,12 +201,10 @@ class PhaseMessage(Message):
 
     def to_log_dict(self) -> dict:
         base_dict = super().to_log_dict()
-        usage = self.calculate_total_usages()
         log_dict = {
             "phase_id": self.phase_id,
             "phase_idx": self.phase_idx,
             "phase_summary": self.summary,
-            "phase_usage": usage,
             "success": self.success,
             "submit": self.submit,
             "max_iterations": self.max_iterations,

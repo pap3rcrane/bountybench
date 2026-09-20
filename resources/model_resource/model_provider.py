@@ -91,6 +91,7 @@ class ModelProvider(ABC):
         stop_sequences: List[str],
         system_prompt: Optional[str] = None,
         thinking_level: Optional[str] = None,
+        include_thoughts: Optional[bool] = None,
         logging_interval: float = 10.0,
         timeout: float = 300.0,
     ) -> ModelResponse:
@@ -115,6 +116,8 @@ class ModelProvider(ABC):
                     request_kwargs["system_prompt"] = system_prompt
                 if thinking_level is not None:
                     request_kwargs["thinking_level"] = thinking_level
+                if include_thoughts is not None:
+                    request_kwargs["include_thoughts"] = include_thoughts
                 response = self.request(
                     model,
                     message,

@@ -219,6 +219,25 @@ Teacher responses are recorded as `teacher_agent` actions in normal workflow JSO
 Objective-rewrite artifacts are saved under `generated_objectives/`.
 Commands that omit all teacher flags run without a teacher.
 
+Direct `google/...` Gemini teachers request Gemini thought summaries on every call.
+Normal workflow traces store them under the teacher model action's
+`additional_metadata.reasoning_output`; objective-rewrite/task-designer traces store
+the same object at top-level `reasoning_output`. The format is:
+
+```json
+{
+  "type": "gemini_thought_summary",
+  "available": true,
+  "text": "Combined human-readable thought summary",
+  "parts": ["Original summary part 1", "Original summary part 2"]
+}
+```
+
+`available` is `false` and `text`/`parts` are empty if Gemini returns no thought
+summary. This field contains Gemini's API-provided thought summary, not its private raw
+chain of thought. The teacher's answer remains separately recorded in `message` and
+`raw_output` (or `raw_response` for task-designer traces).
+
 The `run_teacher_matrix.sh` batch launcher exercises the uploaded prompt groups over
 three disjoint environment sets, one for each teacher mode.
 

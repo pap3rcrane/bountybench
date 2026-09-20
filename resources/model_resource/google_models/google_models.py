@@ -7,7 +7,10 @@ from google import genai
 from google.genai import types
 
 from resources.model_resource.model_provider import ModelProvider
-from resources.model_resource.model_response import ModelResponse
+from resources.model_resource.model_response import (
+    ModelResponse,
+    gemini_reasoning_output,
+)
 from utils.logger import get_main_logger
 
 logger = get_main_logger(__name__)
@@ -21,6 +24,30 @@ def _valid_token_count(value) -> Optional[int]:
     if isinstance(value, bool) or not isinstance(value, Integral) or value < 0:
         return None
     return int(value)
+
+
+def _response_text_parts(response) -> tuple[list[str], list[str]]:
+    """Split Gemini response parts into answer text and thought summaries."""
+    candidates = getattr(response, "candidates", None)
+    if not isinstance(candidates, (list, tuple)) or not candidates:
+        return [], []
+
+    content = getattr(candidates[0], "content", None)
+    parts = getattr(content, "parts", None)
+    if not isinstance(parts, (list, tuple)):
+        return [], []
+
+    answer_parts = []
+    thought_parts = []
+    for part in parts:
+        text = getattr(part, "text", None)
+        if not isinstance(text, str) or not text:
+            continue
+        if getattr(part, "thought", False) is True:
+            thought_parts.append(text)
+        else:
+            answer_parts.append(text)
+    return answer_parts, thought_parts
 
 
 class GoogleModels(ModelProvider):
@@ -96,6 +123,7 @@ class GoogleModels(ModelProvider):
         stop_sequences: List[str],
         system_prompt: Optional[str] = None,
         thinking_level: Optional[str] = None,
+        include_thoughts: bool = False,
     ) -> ModelResponse:
         if self.client is None:
             self.client = self.create_client()
@@ -114,8 +142,11 @@ class GoogleModels(ModelProvider):
                     stop_sequences=stop_sequences,
                     max_output_tokens=max_tokens,
                     thinking_config=(
-                        types.ThinkingConfig(thinking_level=thinking_level)
-                        if thinking_level is not None
+                        types.ThinkingConfig(
+                            thinking_level=thinking_level,
+                            include_thoughts=include_thoughts,
+                        )
+                        if thinking_level is not None or include_thoughts
                         else None
                     ),
                 ),
@@ -152,9 +183,13 @@ class GoogleModels(ModelProvider):
                 )
                 or 0
             )
-            response_text = getattr(response, "text", None)
-            if not isinstance(response_text, str):
-                response_text = ""
+            answer_parts, thought_parts = _response_text_parts(response)
+            if answer_parts:
+                response_text = "".join(answer_parts)
+            else:
+                response_text = getattr(response, "text", None)
+                if not isinstance(response_text, str):
+                    response_text = ""
 
             return ModelResponse(
                 content=response_text,
@@ -162,6 +197,9 @@ class GoogleModels(ModelProvider):
                 output_tokens=output_tokens,
                 time_taken_in_ms=response_request_duration,
                 status_code=status_code,
+                reasoning_output=(
+                    gemini_reasoning_output(thought_parts) if include_thoughts else None
+                ),
             )
         except Exception as e:
             status_code = self._status_code(e)

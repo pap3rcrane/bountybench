@@ -74,7 +74,7 @@ def test_get_total_usage_ignores_missing_and_malformed_phase_values():
 
 def test_to_log_dict(mocker):
     """
-    Test that to_log_dict includes workflow usage information.
+    Test that trajectory logs omit workflow usage and resource metadata.
     """
     mock_phase = mocker.patch.object(
         WorkflowMessage, "phase_messages", new_callable=PropertyMock, return_value=[]
@@ -82,22 +82,14 @@ def test_to_log_dict(mocker):
     mock_metadata = mocker.patch.object(
         WorkflowMessage, "metadata_dict", return_value={"key": "value"}
     )
-    mock_usage = mocker.patch.object(
-        WorkflowMessage,
-        "get_total_usage",
-        return_value={
-            "total_input_tokens": 500,
-            "total_output_tokens": 250,
-            "total_query_time_taken_in_ms": 1000,
-        },
-    )
-
     workflow_message = WorkflowMessage("test_workflow")
+    workflow_message.resources_used = {"model": {"config": {"model": "test"}}}
+    workflow_message.additional_metadata = {
+        "max_input_tokens": 100,
+        "nested": {"output_tokens": 20, "kept": "value"},
+    }
     log_dict = workflow_message.to_log_dict()
 
-    assert "workflow_usage" in log_dict
-    assert log_dict["workflow_usage"] == {
-        "total_input_tokens": 500,
-        "total_output_tokens": 250,
-        "total_query_time_taken_in_ms": 1000,
-    }
+    assert "workflow_usage" not in log_dict
+    assert "resources_used" not in log_dict
+    assert log_dict["additional_metadata"] == {"nested": {"kept": "value"}}

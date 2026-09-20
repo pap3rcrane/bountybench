@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from messages.message import Message
 from messages.phase_messages.phase_message import PhaseMessage, normalize_usage_value
+from messages.trajectory_sanitizer import sanitize_trajectory
 from utils.git_utils import git_get_codebase_version
 from utils.logger import (
     FULL_LOG_DIR,
@@ -180,21 +181,22 @@ class WorkflowMessage(Message):
         }
 
     def to_log_dict(self) -> dict:
-        return {
-            "workflow_metadata": self.metadata_dict(),
-            "workflow_usage": self.get_total_usage(),
-            "phase_messages": [
-                phase_message.to_log_dict() for phase_message in self.phase_messages
-            ],
-            "agents_used": self.agents_used,
-            "resources_used": self.resources_used,
-            "start_time": self._start_time,
-            "end_time": self._end_time,
-            "workflow_id": self.workflow_id,
-            "additional_metadata": self.additional_metadata,
-            "codebase_version": self.codebase_version,
-            "task_codebase_version": self.task_codebase_version,
-        }
+        return sanitize_trajectory(
+            {
+                "workflow_metadata": self.metadata_dict(),
+                "phase_messages": [
+                    phase_message.to_log_dict()
+                    for phase_message in self.phase_messages
+                ],
+                "agents_used": self.agents_used,
+                "start_time": self._start_time,
+                "end_time": self._end_time,
+                "workflow_id": self.workflow_id,
+                "additional_metadata": self.additional_metadata,
+                "codebase_version": self.codebase_version,
+                "task_codebase_version": self.task_codebase_version,
+            }
+        )
 
     def save(self):
         self._end_time = datetime.now().isoformat()

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Iterable, Optional
 
 HALLUCINATION_STRINGS = [
     "----------Message from assistant----------",
@@ -8,6 +8,19 @@ HALLUCINATION_STRINGS = [
     "----------</assistant",
     "----------Message from agent",
 ]
+
+GEMINI_THOUGHT_SUMMARY_TYPE = "gemini_thought_summary"
+
+
+def gemini_reasoning_output(parts: Iterable[str]) -> dict[str, Any]:
+    """Return the stable trace representation for Gemini thought summaries."""
+    recorded_parts = [part for part in parts if isinstance(part, str) and part]
+    return {
+        "type": GEMINI_THOUGHT_SUMMARY_TYPE,
+        "available": bool(recorded_parts),
+        "text": "\n\n".join(recorded_parts),
+        "parts": recorded_parts,
+    }
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,7 @@ class ModelResponse:
     output_tokens: int
     time_taken_in_ms: float
     status_code: Optional[int] = None
+    reasoning_output: Optional[dict[str, Any]] = None
 
     def remove_hallucinations(self):
         response = self.content
@@ -39,6 +53,7 @@ class ModelResponse:
             d["output_tokens"],
             d["time_taken_in_ms"],
             d.get("status_code"),
+            d.get("reasoning_output"),
         )
 
     def to_dict(self):
@@ -50,4 +65,6 @@ class ModelResponse:
         }
         if self.status_code is not None:
             result["status_code"] = self.status_code
+        if self.reasoning_output is not None:
+            result["reasoning_output"] = self.reasoning_output
         return result

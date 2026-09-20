@@ -14,6 +14,7 @@ from resources.model_resource.anthropic_models.anthropic_models import (
 )
 from resources.model_resource.helm_models.helm_models import HelmModels
 from resources.model_resource.model_provider import ModelProvider
+from resources.model_resource.model_response import gemini_reasoning_output
 from resources.model_resource.model_utils import truncate_input_to_max_tokens
 from resources.model_resource.services.api_key_service import verify_and_auth_api_key
 from resources.runnable_base_resource import RunnableBaseResource
@@ -259,11 +260,20 @@ class ModelResource(RunnableBaseResource):
             input_message.memory is not None
         ), "Message to model.run() should contain memory."
         model_input = input_message.memory
+        record_gemini_reasoning = (
+            self.resource_id == "teacher_model"
+            and not self.helm
+            and self.model.startswith("google/")
+        )
         if self.use_mock_model:
             return ActionMessage(
                 resource_id=self.resource_id,
                 message=input_message.message,
-                additional_metadata=None,
+                additional_metadata=(
+                    {"reasoning_output": gemini_reasoning_output([])}
+                    if record_gemini_reasoning
+                    else None
+                ),
                 prev=prev_action_message,
             )
 
@@ -300,6 +310,7 @@ class ModelResource(RunnableBaseResource):
                 stop_sequences=self.stop_sequences,
                 system_prompt=system_prompt,
                 thinking_level=self.thinking_level,
+                include_thoughts=True if record_gemini_reasoning else None,
                 timeout=self.timeout,
             )
         except Exception as e:
@@ -326,19 +337,19 @@ class ModelResource(RunnableBaseResource):
             "raw_output": model_response.content,
             "model": self.model,
             "temperature": self.temperature,
-            "max_input_tokens": self.max_input_tokens,
-            "max_output_tokens": self.max_output_tokens,
             "stop_sequences": self.stop_sequences,
-            "input_tokens": model_response.input_tokens,
-            "output_tokens": model_response.output_tokens,
             "time_taken_in_ms": model_response.time_taken_in_ms,
         }
         if system_prompt is not None:
             metadata["system_prompt"] = system_prompt
         if self.thinking_level is not None:
             metadata["thinking_level"] = self.thinking_level
-        if self.budget_tokens is not None:
-            metadata["budget_tokens"] = self.budget_tokens
+        if record_gemini_reasoning:
+            metadata["reasoning_output"] = (
+                model_response.reasoning_output
+                if model_response.reasoning_output is not None
+                else gemini_reasoning_output([])
+            )
         metadata = (metadata,)
 
         return ActionMessage(

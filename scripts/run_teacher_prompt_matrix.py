@@ -554,6 +554,7 @@ class MatrixRunner:
         )
         self._state_lock = threading.Lock()
         self._active_processes = {}
+        self._teacher_artifacts: dict[str, dict[str, Optional[str]]] = {}
         self._stop_event = threading.Event()
         self.failed_configurations = 0
         self.completed_configurations = 0
@@ -677,6 +678,9 @@ class MatrixRunner:
         error: Optional[str],
         backend_container: str,
     ) -> dict:
+        teacher_artifacts = self._teacher_artifacts.get(
+            configuration.configuration_id, {}
+        )
         return {
             "record_type": "configuration",
             **self._base_record(configuration),
@@ -691,6 +695,8 @@ class MatrixRunner:
             "configuration_log_path": str(
                 self.batch_log_dir / f"{configuration.configuration_id}.log"
             ),
+            "teacher_objective_path": teacher_artifacts.get("objective_path"),
+            "teacher_trace_path": teacher_artifacts.get("teacher_trace_path"),
             "backend_container": backend_container,
             "error": error,
         }
@@ -709,8 +715,20 @@ class MatrixRunner:
                 return str(
                     worker_root / "full_logs" / candidate.relative_to("/app/full_logs")
                 )
+            if candidate.is_absolute() and str(candidate).startswith(
+                "/app/generated_objectives/"
+            ):
+                return str(
+                    worker_root
+                    / "generated_objectives"
+                    / candidate.relative_to("/app/generated_objectives")
+                )
             if not candidate.is_absolute() and candidate.parts:
-                if candidate.parts[0] in {"logs", "full_logs"}:
+                if candidate.parts[0] in {
+                    "logs",
+                    "full_logs",
+                    "generated_objectives",
+                }:
                     return str(worker_root / candidate)
         if candidate.is_absolute() and str(candidate).startswith("/app/"):
             candidate = REPOSITORY_ROOT / candidate.relative_to("/app")
@@ -945,6 +963,15 @@ class MatrixRunner:
         elif event_name == "teacher_rewrite_started":
             self.progress.start_teacher_rewrite(backend_container)
         elif event_name == "teacher_rewrite_finished":
+            if event.get("status") == "success":
+                self._teacher_artifacts[configuration.configuration_id] = {
+                    "objective_path": self._host_log_path(
+                        event.get("objective_path"), backend_container
+                    ),
+                    "teacher_trace_path": self._host_log_path(
+                        event.get("teacher_trace_path"), backend_container
+                    ),
+                }
             self.progress.finish_teacher_rewrite(backend_container)
 
         return event_error
