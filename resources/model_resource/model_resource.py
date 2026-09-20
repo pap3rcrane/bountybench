@@ -48,6 +48,7 @@ class ModelResourceConfig(BaseResourceConfig):
     use_mock_model: bool = field(default=False)
     timeout: float = field(default=300.0)
     preserve_oldest_input: bool = field(default=False)
+    preserve_newest_input: bool = field(default=False)
     thinking_level: Optional[str] = field(default=None)
     budget_tokens: Optional[int] = field(
         default=None
@@ -86,6 +87,10 @@ class ModelResourceConfig(BaseResourceConfig):
             raise ValueError("max_input_tokens must be positive")
         if self.max_output_tokens <= 0:
             raise ValueError("max_output_tokens must be positive")
+        if self.preserve_oldest_input and self.preserve_newest_input:
+            raise ValueError(
+                "preserve_oldest_input and preserve_newest_input are mutually exclusive"
+            )
         if self.thinking_level not in {None, "minimal", "low", "medium", "high"}:
             raise ValueError("thinking_level must be minimal, low, medium, or high")
         if self.thinking_level is not None and (
@@ -129,6 +134,7 @@ class ModelResource(RunnableBaseResource):
         self.use_mock_model = self._resource_config.use_mock_model
         self.timeout = self._resource_config.timeout
         self.preserve_oldest_input = self._resource_config.preserve_oldest_input
+        self.preserve_newest_input = self._resource_config.preserve_newest_input
         self.thinking_level = self._resource_config.thinking_level
         if not self.use_mock_model:
             self.model_provider: ModelProvider = self.get_model_provider()
@@ -299,6 +305,7 @@ class ModelResource(RunnableBaseResource):
             model=self.model,
             use_helm=self.helm,
             preserve_oldest=self.preserve_oldest_input,
+            preserve_newest=self.preserve_newest_input,
             protected_content=getattr(input_message, "protected_memory_content", None),
             required_prefix=getattr(input_message, "required_memory_prefix", None),
         )
@@ -406,6 +413,7 @@ class ModelResource(RunnableBaseResource):
                 "stop_sequences": self.stop_sequences,
                 "use_mock_model": self.use_mock_model,
                 "preserve_oldest_input": self.preserve_oldest_input,
+                "preserve_newest_input": self.preserve_newest_input,
             }
             # if self.budget_tokens is not None:
             #     base_dict["config"]["budget_tokens"] = self.budget_tokens

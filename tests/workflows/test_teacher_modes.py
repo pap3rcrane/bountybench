@@ -136,10 +136,10 @@ def test_objective_system_placement_keeps_system_prompt_out_of_user_input(tmp_pa
     )
 
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory
-    assert "ORIGINAL BENCHMARK TASK:" not in model_input.memory
+    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
     assert model_input.memory.count("AVAILABLE TRACE (oldest to newest):") == 3
-    assert model_input.system_prompt.startswith("ACTUAL SYSTEM PROMPT\n\n")
-    assert model_input.system_prompt.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert model_input.system_prompt == prompt.read_text().strip()
+    assert "ORIGINAL BENCHMARK TASK:" not in model_input.system_prompt
 
 
 def test_objective_none_placement_needs_no_system_prompt_file(tmp_path):
@@ -224,11 +224,13 @@ def test_objective_rewrite_passes_separate_system_prompt_to_model(tmp_path):
     }
     assert "response" not in result.teacher_trace
     assert "objective" not in result.teacher_trace
-    assert model_config.preserve_oldest_input is True
+    assert model_config.preserve_oldest_input is False
+    assert model_config.preserve_newest_input is True
     assert model_config.thinking_level == "high"
     assert model_config.timeout == 900.0
-    assert model_input.system_prompt.startswith("ACTUAL SYSTEM PROMPT\n\n")
-    assert model_input.system_prompt.count("ORIGINAL BENCHMARK TASK:") == 3
+    assert model_input.system_prompt == prompt.read_text().strip()
+    assert "ORIGINAL BENCHMARK TASK:" not in model_input.system_prompt
+    assert model_input.memory.count("ORIGINAL BENCHMARK TASK:") == 3
     assert "ACTUAL SYSTEM PROMPT" not in model_input.memory
 
 

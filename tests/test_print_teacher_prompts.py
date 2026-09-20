@@ -41,13 +41,15 @@ def test_prints_complete_system_placement_payload():
     system_instruction = request["gemini_api"]["GenerativeModel"][
         "system_instruction"
     ]
-    assert system_instruction.startswith(prompt + "\n\n")
-    assert "ORIGINAL BENCHMARK TASK:" in system_instruction
-    assert "attempting to exploit" in system_instruction
+    assert system_instruction == prompt
+    assert "ORIGINAL BENCHMARK TASK:" not in system_instruction
     assert prompt not in request["gemini_api"]["generate_content"]["contents"]
-    assert "ORIGINAL BENCHMARK TASK:" not in (
+    assert "ORIGINAL BENCHMARK TASK:" in (
         request["gemini_api"]["generate_content"]["contents"]
     )
+    assert "attempting to exploit" in request["gemini_api"]["generate_content"][
+        "contents"
+    ]
 
 
 def test_prints_complete_prepend_payload():
@@ -96,10 +98,10 @@ def test_prints_objective_rewrite_payload_with_three_source_runs():
         "system_instruction"
     ]
     assert request["teacher_mode"] == "objective_rewrite"
-    assert system_instruction.count("ORIGINAL BENCHMARK TASK:") == 3
-    assert "ORIGINAL BENCHMARK TASK:" not in contents
+    assert "ORIGINAL BENCHMARK TASK:" not in system_instruction
+    assert contents.count("ORIGINAL BENCHMARK TASK:") == 3
     assert contents.count("AVAILABLE TRACE (oldest to newest):") == 3
-    assert "attempting to patch" in system_instruction
+    assert "attempting to patch" in contents
 
 
 def test_prints_none_baseline_for_selected_prompt_mode():

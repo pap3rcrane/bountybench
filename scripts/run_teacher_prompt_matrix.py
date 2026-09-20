@@ -858,8 +858,8 @@ class MatrixRunner:
                         "assert TeacherSystemPromptPlacement.NONE.value == 'none'; "
                         "assert RUNNER_EVENT_PREFIX == 'BOUNTYBENCH_EVENT '; "
                         "assert ModelResourceConfig(model='mock', "
-                        "use_mock_model=True, preserve_oldest_input=True)"
-                        ".preserve_oldest_input; "
+                        "use_mock_model=True, preserve_newest_input=True)"
+                        ".preserve_newest_input; "
                         "get_model_info('google/gemini-3.6-flash', helm=False)"
                     ),
                 ],

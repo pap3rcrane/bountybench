@@ -10,6 +10,7 @@ from agents.teacher_agent import (
     format_original_task,
     format_teacher_context,
     format_teacher_trace,
+    format_teacher_trace_prefix,
 )
 from prompts.prompts import STOP_TOKEN
 from resources.model_resource.model_resource import ModelResource, ModelResourceConfig
@@ -28,6 +29,7 @@ class _ObjectiveRewriteInput:
     memory: str
     system_prompt: Optional[str] = None
     message: str = "Mock rewritten objective."
+    required_memory_prefix: Optional[str] = None
 
 
 @dataclass
@@ -91,28 +93,32 @@ def build_objective_rewrite_input(
     runs = [_compact_source_log(path) for path in source_logs]
     if system_prompt_placement is TeacherSystemPromptPlacement.PREPEND:
         assert system_prompt_file is not None
+        custom_prompt = system_prompt_file.read_text().strip()
         user_runs = "\n\n".join(
             f"SOURCE RUN {number}:\n{format_teacher_context(task, trace)}"
             for number, (task, trace) in enumerate(runs, start=1)
         )
         return _ObjectiveRewriteInput(
-            memory=f"{system_prompt_file.read_text().strip()}\n\n{user_runs}"
+            memory=f"{custom_prompt}\n\n{user_runs}",
+            required_memory_prefix=(
+                f"{custom_prompt}\n\nSOURCE RUN 1:\n"
+                f"{format_original_task(runs[0][0])}\n"
+                f"{format_teacher_trace_prefix()}"
+            ),
         )
 
     if system_prompt_placement is TeacherSystemPromptPlacement.SYSTEM:
         assert system_prompt_file is not None
-        system_tasks = "\n\n".join(
-            f"SOURCE RUN {number}:\n{format_original_task(task)}"
-            for number, (task, _) in enumerate(runs, start=1)
-        )
         user_runs = "\n\n".join(
-            f"SOURCE RUN {number}:\n{format_teacher_trace(trace)}"
-            for number, (_, trace) in enumerate(runs, start=1)
+            f"SOURCE RUN {number}:\n{format_teacher_context(task, trace)}"
+            for number, (task, trace) in enumerate(runs, start=1)
         )
         return _ObjectiveRewriteInput(
             memory=user_runs,
-            system_prompt=(
-                f"{system_prompt_file.read_text().strip()}\n\n{system_tasks}"
+            system_prompt=system_prompt_file.read_text().strip(),
+            required_memory_prefix=(
+                f"SOURCE RUN 1:\n{format_original_task(runs[0][0])}\n"
+                f"{format_teacher_trace_prefix()}"
             ),
         )
 
@@ -122,6 +128,10 @@ def build_objective_rewrite_input(
     )
     return _ObjectiveRewriteInput(
         memory=user_runs,
+        required_memory_prefix=(
+            f"SOURCE RUN 1:\n{format_original_task(runs[0][0])}\n"
+            f"{format_teacher_trace_prefix()}"
+        ),
     )
 
 
@@ -183,7 +193,7 @@ async def rewrite_objective(
             max_output_tokens=max_output_tokens,
             temperature=temperature,
             timeout=TEACHER_REQUEST_TIMEOUT_SECONDS,
-            preserve_oldest_input=True,
+            preserve_newest_input=True,
             thinking_level="high" if model.startswith("google/") else None,
         ),
     )

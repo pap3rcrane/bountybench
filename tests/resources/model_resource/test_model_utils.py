@@ -68,6 +68,23 @@ def test_input_truncation_can_preserve_oldest_content(monkeypatch):
     assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 40
 
 
+def test_input_truncation_can_preserve_newest_content(monkeypatch):
+    use_fake_local_tokenizer(monkeypatch)
+
+    truncated = truncate_input_to_max_tokens(
+        max_input_tokens=48,
+        model_input="trace-header\noldest-" + ("x" * 100) + "-newest",
+        model=OPENROUTER_MODEL,
+        preserve_newest=True,
+        required_prefix="trace-header\n",
+    )
+
+    assert truncated.startswith("trace-header\n\n...TRUNCATED...\n")
+    assert truncated.endswith("-newest")
+    assert "oldest" not in truncated
+    assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 48
+
+
 def test_input_truncation_keeps_complete_protected_teacher_tail(monkeypatch):
     use_fake_local_tokenizer(monkeypatch)
     teacher = "[teacher_agent] " + format_teacher_output_for_student(

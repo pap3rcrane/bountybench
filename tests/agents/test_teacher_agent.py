@@ -167,7 +167,8 @@ def test_observe_schedules_teacher_after_native_agents(tmp_path):
         for resource, config in phase.define_resources()
         if resource is ResourceType.TEACHER_MODEL
     )
-    assert teacher_config.preserve_oldest_input is True
+    assert teacher_config.preserve_oldest_input is False
+    assert teacher_config.preserve_newest_input is True
 
     phase.agents = [
         ("executor_agent", object.__new__(ExecutorAgent)),
@@ -230,12 +231,10 @@ def test_system_placement_separates_system_prompt_from_user_prompt(tmp_path):
     asyncio.run(agent.run([make_history()]))
 
     teacher_input = agent.resources.teacher_model.inputs[0]
-    assert teacher_input.system_prompt.startswith("CUSTOM TEACHER SYSTEM PROMPT\n\n")
-    assert "ORIGINAL BENCHMARK TASK:\n---\noriginal task\n---" in (
-        teacher_input.system_prompt
-    )
+    assert teacher_input.system_prompt == "CUSTOM TEACHER SYSTEM PROMPT"
+    assert "ORIGINAL BENCHMARK TASK" not in teacher_input.system_prompt
     assert "CUSTOM TEACHER SYSTEM PROMPT" not in teacher_input.memory
-    assert "original task" not in teacher_input.memory
+    assert "ORIGINAL BENCHMARK TASK:\n---\noriginal task\n---" in teacher_input.memory
     assert "AVAILABLE TRACE" in teacher_input.memory
 
 

@@ -112,9 +112,12 @@ def truncate_input_to_max_tokens(
     model: str,
     use_helm: bool = False,
     preserve_oldest: bool = False,
+    preserve_newest: bool = False,
     protected_content: str = None,
     required_prefix: str = None,
 ) -> str:
+    if preserve_oldest and preserve_newest:
+        raise ValueError("preserve_oldest and preserve_newest are mutually exclusive")
     if protected_content and protected_content not in model_input:
         raise ValueError("Protected content is not present in the model input.")
     if required_prefix and not model_input.startswith(required_prefix):
@@ -134,6 +137,27 @@ def truncate_input_to_max_tokens(
         if preserve_oldest:
             truncated_tokens = input_tokens[:tokens_to_keep] + truncation_alert_tokens
             truncated_input = decode_tokenized_inputs(truncated_tokens, model, use_helm)
+        elif preserve_newest:
+            fixed_prefix = required_prefix or ""
+            fixed_prefix_tokens = tokenize_input(fixed_prefix, model, use_helm)
+            tail_tokens_to_keep = tokens_to_keep - len(fixed_prefix_tokens)
+            if tail_tokens_to_keep < 0:
+                raise ProtectedInputTruncationError(
+                    "The required input prefix cannot fit under the "
+                    f"{max_input_tokens}-token model input limit."
+                )
+            remaining_tokens = tokenize_input(
+                model_input[len(fixed_prefix) :], model, use_helm
+            )
+            tail_tokens = (
+                remaining_tokens[-tail_tokens_to_keep:] if tail_tokens_to_keep else []
+            )
+            truncated_tokens = (
+                fixed_prefix_tokens + truncation_alert_tokens + tail_tokens
+            )
+            truncated_input = decode_tokenized_inputs(
+                truncated_tokens, model, use_helm
+            )
         else:
             half_tokens_to_keep = tokens_to_keep // 2
             beginning_tokens = input_tokens[:half_tokens_to_keep]

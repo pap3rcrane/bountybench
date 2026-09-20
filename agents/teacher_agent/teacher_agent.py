@@ -16,6 +16,10 @@ from utils.logger import get_main_logger
 logger = get_main_logger(__name__)
 
 
+def format_teacher_trace_prefix() -> str:
+    return "AVAILABLE TRACE (oldest to newest):\n---\n"
+
+
 def format_original_task(original_task: str) -> str:
     return (
         "ORIGINAL BENCHMARK TASK:\n"
@@ -26,12 +30,7 @@ def format_original_task(original_task: str) -> str:
 
 
 def format_teacher_trace(trace: str) -> str:
-    return (
-        "AVAILABLE TRACE (oldest to newest):\n"
-        "---\n"
-        f"{trace}\n"
-        "---\n"
-    )
+    return f"{format_teacher_trace_prefix()}{trace}\n---\n"
 
 
 def format_teacher_context(original_task: str, trace: str) -> str:
@@ -63,6 +62,7 @@ class _TeacherModelInput:
     system_prompt: Optional[str] = None
     message: str = "Teacher mock response."
     trace_turns: int = 0
+    required_memory_prefix: Optional[str] = None
 
 
 class TeacherAgent(BaseAgent):
@@ -158,15 +158,20 @@ class TeacherAgent(BaseAgent):
         return original_task
 
     def _build_user_prompt(self, original_task: str, trace: str) -> str:
-        if self.system_prompt_placement is TeacherSystemPromptPlacement.SYSTEM:
-            return format_teacher_trace(trace)
-
         user_prompt = format_teacher_context(original_task, trace)
         if self.system_prompt_placement is TeacherSystemPromptPlacement.PREPEND:
             assert self.system_prompt_path is not None
             system_prompt = self.system_prompt_path.read_text().strip()
             return f"{system_prompt}\n\n{user_prompt}"
         return user_prompt
+
+    def _build_required_memory_prefix(self, original_task: str) -> str:
+        trace_prefix = format_teacher_trace_prefix()
+        prefix = f"{format_original_task(original_task)}\n{trace_prefix}"
+        if self.system_prompt_placement is TeacherSystemPromptPlacement.PREPEND:
+            assert self.system_prompt_path is not None
+            return f"{self.system_prompt_path.read_text().strip()}\n\n{prefix}"
+        return prefix
 
     def build_model_input(self, previous: Message) -> _TeacherModelInput:
         """Build the exact prompt fields passed to the teacher model resource."""
@@ -175,13 +180,13 @@ class TeacherAgent(BaseAgent):
         return _TeacherModelInput(
             memory=self._build_user_prompt(original_task, trace),
             system_prompt=(
-                f"{self.system_prompt_path.read_text().strip()}\n\n"
-                f"{format_original_task(original_task)}"
+                self.system_prompt_path.read_text().strip()
                 if self.system_prompt_placement is TeacherSystemPromptPlacement.SYSTEM
                 and self.system_prompt_path is not None
                 else None
             ),
             trace_turns=trace.count("TURN "),
+            required_memory_prefix=self._build_required_memory_prefix(original_task),
         )
 
     async def run(self, messages: List[AgentMessage]) -> AgentMessage:

@@ -105,7 +105,7 @@ class BountyPhase(BasePhase, ABC):
                 "teacher_max_output_tokens", 4096
             ),
             temperature=self.workflow.params.get("teacher_temperature", 0.0),
-            preserve_oldest_input=True,
+            preserve_newest_input=True,
             thinking_level="high" if model.startswith("google/") else None,
         )
 
