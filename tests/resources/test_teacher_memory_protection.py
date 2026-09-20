@@ -47,14 +47,14 @@ def memory_resource():
     )
 
 
-def test_latest_teacher_response_bypasses_per_message_shortening():
+def test_latest_teacher_response_is_shortened_then_protected():
     response = " ".join(f"teacher-word-{i}" for i in range(1_000))
     teacher = build_teacher_message(response)
 
     memory = memory_resource().get_memory(teacher).memory
 
-    assert teacher.message in memory
-    assert "...TRUNCATED..." not in memory
+    assert teacher.message not in memory
+    assert "...TRUNCATED..." in memory
     assert teacher.protected_memory_content is not None
     assert teacher.required_memory_prefix == "initial prompt"
     assert memory.endswith(teacher.protected_memory_content)

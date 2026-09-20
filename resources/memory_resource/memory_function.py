@@ -1,9 +1,21 @@
 ITERATIONS_TO_KEEP = 3
-MSG_TOKEN_LIMIT = [1536, 512, 128]  # r_t, o_k_t, o_p_t
+# These legacy values are halved when applied, producing effective caps of
+# 768/256/64 words without a teacher and 768/256/64/768 with one.
+MSG_TOKEN_LIMIT = [1536, 512, 128]
+TEACHER_MSG_TOKEN_LIMIT = [*MSG_TOKEN_LIMIT, 1536]
+TEACHER_ENTRY_PREFIX = "[teacher_agent]"
+
+
+def _has_teacher_agent(segments):
+    return any(
+        str(message).lstrip().startswith(TEACHER_ENTRY_PREFIX)
+        for segment in segments
+        for message in segment
+    )
 
 
 class ProtectedMemoryEntry(str):
-    """A memory entry that must bypass per-message shortening."""
+    """A memory entry that must survive final model-input truncation intact."""
 
 
 class MemoryCollationFunctions:
@@ -42,10 +54,16 @@ class MemoryTruncationFunctions:
     def segment_fn_last_n(
         segment,
         n=ITERATIONS_TO_KEEP,
-        msg_per_iteration=len(MSG_TOKEN_LIMIT)
+        msg_per_iteration=None,
     ):
         """Keep last n messages in each segment."""
         trunc_token = "..."
+        if msg_per_iteration is None:
+            msg_per_iteration = (
+                len(TEACHER_MSG_TOKEN_LIMIT)
+                if _has_teacher_agent([segment])
+                else len(MSG_TOKEN_LIMIT)
+            )
         msg_to_keep = n * msg_per_iteration
 
         if len(segment) <= msg_to_keep:
@@ -65,17 +83,21 @@ class MemoryTruncationFunctions:
         return segments
 
     @staticmethod
-    def memory_fn_by_message_token(
-        segments, msg_token_limit=MSG_TOKEN_LIMIT
-    ):
+    def memory_fn_by_message_token(segments, msg_token_limit=None):
         trunc_token = "\n...TRUNCATED...\n"
+        if msg_token_limit is None:
+            msg_token_limit = (
+                TEACHER_MSG_TOKEN_LIMIT
+                if _has_teacher_agent(segments)
+                else MSG_TOKEN_LIMIT
+            )
         msg_per_iteration = len(msg_token_limit)
 
         truncated = []
 
         for segment in segments:
             trunc_segment = []
-            
+
             # Calculate the offset for empty messages at the front
             # This ensures we align correctly with the token limit pattern
             offset = len(segment) % msg_per_iteration
@@ -83,13 +105,10 @@ class MemoryTruncationFunctions:
                 offset = msg_per_iteration - offset
 
             for j, msg in enumerate(segment):
-                if isinstance(msg, ProtectedMemoryEntry):
-                    trunc_segment.append(msg)
-                    continue
-
+                protected = isinstance(msg, ProtectedMemoryEntry)
                 tokens = msg.split()
                 cnt = len(tokens)
-                
+
                 # Apply the offset to ensure correct token limit is used
                 pattern_index = (j + offset) % msg_per_iteration
                 max_message_input_tokens = msg_token_limit[pattern_index] // 2
@@ -102,11 +121,13 @@ class MemoryTruncationFunctions:
 
                     # Combine with truncation token in the middle
                     truncated_msg = (
-                        " ".join(start_tokens)
-                        + trunc_token
-                        + " ".join(end_tokens)
+                        " ".join(start_tokens) + trunc_token + " ".join(end_tokens)
                     )
-                    trunc_segment.append(truncated_msg)
+                    trunc_segment.append(
+                        ProtectedMemoryEntry(truncated_msg)
+                        if protected
+                        else truncated_msg
+                    )
                 else:
                     trunc_segment.append(msg)
 
