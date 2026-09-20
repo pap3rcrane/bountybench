@@ -279,6 +279,8 @@ class ModelResource(RunnableBaseResource):
             model=self.model,
             use_helm=self.helm,
             preserve_oldest=self.preserve_oldest_input,
+            protected_content=getattr(input_message, "protected_memory_content", None),
+            required_prefix=getattr(input_message, "required_memory_prefix", None),
         )
         if system_prompt is not None:
             if self.helm or not self.model.startswith("google/"):

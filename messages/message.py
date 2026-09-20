@@ -14,6 +14,8 @@ class Message(ABC):
         self._version_prev = None
         self._version_next = None
         self._parent = None
+        self._protected_memory_content = None
+        self._required_memory_prefix = None
 
         self.timestamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
         self._id = str(id(self))
@@ -65,6 +67,26 @@ class Message(ABC):
 
     def set_next(self, next: "Message") -> None:
         self._next = next
+
+    @property
+    def protected_memory_content(self) -> str:
+        """Memory content that must reach the model without truncation."""
+        return self._protected_memory_content
+
+    @protected_memory_content.setter
+    def protected_memory_content(self, value: str) -> None:
+        """Set by MemoryResource when an entry needs truncation protection."""
+        self._protected_memory_content = value
+
+    @property
+    def required_memory_prefix(self) -> str:
+        """Student prompt prefix that must remain when content is protected."""
+        return self._required_memory_prefix
+
+    @required_memory_prefix.setter
+    def required_memory_prefix(self, value: str) -> None:
+        """Set by MemoryResource alongside protected teacher content."""
+        self._required_memory_prefix = value
 
     def set_version_prev(self, version_prev: "Message") -> None:
         self._version_prev = version_prev

@@ -10,6 +10,7 @@ from resources.base_resource import BaseResource, BaseResourceConfig
 from resources.memory_resource.memory_function import (
     MemoryCollationFunctions,
     MemoryTruncationFunctions,
+    ProtectedMemoryEntry,
 )
 from resources.memory_resource.memory_prompt import MemoryPrompts
 from resources.memory_resource.memory_scope import MemoryScope
@@ -98,7 +99,14 @@ class MemoryResource(BaseResource):
             system_messages.add(message._message)
         else:
             if hasattr(message, "_message") and message._message:
-                self.add_to_segment(message, segments[-1])
+                self.add_to_segment(
+                    message,
+                    segments[-1],
+                    protect=(
+                        isinstance(message, AgentMessage)
+                        and message.agent_id == "teacher_agent"
+                    ),
+                )
 
         # truncate each segment
         trunc_segments = [
@@ -108,15 +116,33 @@ class MemoryResource(BaseResource):
         trunc_segments = self.memory_trunc_fn(trunc_segments)
         start = 1
         collated_segments = []
+        protected_memory_content = None
         for segment in trunc_segments:
             collated_segment = self.collate_fn(segment, start=start)
             collated_segments.append(collated_segment)
+
+            protected_indexes = [
+                i
+                for i, entry in enumerate(segment)
+                if isinstance(entry, ProtectedMemoryEntry)
+            ]
+            if protected_indexes:
+                assert len(protected_indexes) == 1
+                assert protected_memory_content is None
+                protected_index = protected_indexes[0]
+                protected_memory_content = self.collate_fn(
+                    [segment[protected_index]], start=start + protected_index
+                )
+                assert collated_segment.endswith(protected_memory_content)
             start += len(segment)
 
-        return collated_segments, system_messages
+        return collated_segments, system_messages, protected_memory_content
 
     def get_memory(self, message: ActionMessage | AgentMessage | PhaseMessage):
-        messages, system_messages = self.parse_message(message)
+        messages, system_messages, protected_memory_content = self.parse_message(
+            message
+        )
+        message.protected_memory_content = protected_memory_content
 
         assert len(system_messages) == 1, (
             f"Current memory implementation only supports single initial prompt.\n"
@@ -127,6 +153,9 @@ class MemoryResource(BaseResource):
         )
 
         system_message = system_messages.pop()
+        message.required_memory_prefix = (
+            system_message if protected_memory_content is not None else None
+        )
 
         kwargs = ["prev_phase_messages", "prev_agent_messages", "prev_action_messages"][
             self.scope.value :
@@ -215,10 +244,11 @@ class MemoryResource(BaseResource):
             return msg_node.parent.agent_id
         return msg_node.parent.agent_id + "/" + msg_node.resource_id.split("_")[0]
 
-    def add_to_segment(self, msg_node, segment):
+    def add_to_segment(self, msg_node, segment, protect=False):
         id_ = self.extract_id(msg_node)
 
-        segment.append(f"[{id_}] {msg_node._message.strip()}")
+        entry = f"[{id_}] {msg_node._message.strip()}"
+        segment.append(ProtectedMemoryEntry(entry) if protect else entry)
 
     def go_up(self, msg_node, dst_cls):
         down_stop = None

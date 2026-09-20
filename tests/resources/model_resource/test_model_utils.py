@@ -1,5 +1,8 @@
+import pytest
+
 from resources.model_resource import model_utils
 from resources.model_resource.model_utils import (
+    ProtectedInputTruncationError,
     decode_tokenized_inputs,
     get_num_tokens,
     tokenize_input,
@@ -62,3 +65,41 @@ def test_input_truncation_can_preserve_oldest_content(monkeypatch):
     assert truncated.endswith("\n...TRUNCATED...\n")
     assert "newest" not in truncated
     assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 40
+
+
+def test_input_truncation_keeps_complete_protected_teacher_tail(monkeypatch):
+    use_fake_local_tokenizer(monkeypatch)
+    teacher = "[teacher_agent] Teacher response:\ncomplete feedback"
+    retry_reminder = '\n\nInclude "Command:" in your response.'
+    message = "student prompt\n" + ("history " * 30) + teacher + retry_reminder
+
+    truncated = truncate_input_to_max_tokens(
+        max_input_tokens=140,
+        model_input=message,
+        model=OPENROUTER_MODEL,
+        protected_content=teacher,
+        required_prefix="student prompt\n",
+    )
+
+    assert "...TRUNCATED..." in truncated
+    assert truncated.startswith("student prompt\n")
+    assert truncated.endswith(teacher + retry_reminder)
+    assert len(tokenize_input(truncated, OPENROUTER_MODEL)) <= 140
+
+
+def test_input_truncation_rejects_instead_of_shortening_teacher(monkeypatch):
+    use_fake_local_tokenizer(monkeypatch)
+    teacher = "[teacher_agent] Teacher response:\n" + ("feedback" * 20)
+    message = "student prompt\n" + ("history " * 30) + teacher
+
+    with pytest.raises(
+        ProtectedInputTruncationError,
+        match="most recent teacher message cannot fit intact",
+    ):
+        truncate_input_to_max_tokens(
+            max_input_tokens=140,
+            model_input=message,
+            model=OPENROUTER_MODEL,
+            protected_content=teacher,
+            required_prefix="student prompt\n",
+        )

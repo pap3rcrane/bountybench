@@ -20,6 +20,7 @@ from messages.message import Message
 from resources.kali_env_resource import KaliEnvResource
 from resources.memory_resource.memory_resource import MemoryResource
 from resources.model_resource.model_resource import ModelResource, ModelResponseFailure
+from resources.model_resource.model_utils import ProtectedInputTruncationError
 
 
 @pytest.fixture
@@ -82,6 +83,24 @@ async def test_call_lm_failure(executor_agent):
         executor_agent.resources.model.run.call_count == MAX_RETRIES
     )  # call_lm MAX_RETRIES
     assert executor_agent.parse_response.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_call_lm_does_not_retry_protected_teacher_truncation(executor_agent):
+    executor_agent.last_executor_agent_message = AgentMessage("agent_id")
+    executor_agent.resources.model.run = Mock(
+        side_effect=ProtectedInputTruncationError("teacher would be truncated")
+    )
+    previous = AgentMessage("teacher_agent", "Teacher response:\nfeedback")
+    previous.memory = "student input"
+    executor_agent.resources.executor_agent_memory.get_memory = Mock(
+        return_value=previous
+    )
+
+    with pytest.raises(ProtectedInputTruncationError):
+        await executor_agent.call_lm(previous)
+
+    executor_agent.resources.model.run.assert_called_once()
 
 
 @pytest.mark.asyncio

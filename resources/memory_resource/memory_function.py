@@ -2,6 +2,10 @@ ITERATIONS_TO_KEEP = 3
 MSG_TOKEN_LIMIT = [1536, 512, 128]  # r_t, o_k_t, o_p_t
 
 
+class ProtectedMemoryEntry(str):
+    """A memory entry that must bypass per-message shortening."""
+
+
 class MemoryCollationFunctions:
     """
     Collection of memory collation functions.
@@ -79,6 +83,10 @@ class MemoryTruncationFunctions:
                 offset = msg_per_iteration - offset
 
             for j, msg in enumerate(segment):
+                if isinstance(msg, ProtectedMemoryEntry):
+                    trunc_segment.append(msg)
+                    continue
+
                 tokens = msg.split()
                 cnt = len(tokens)
                 

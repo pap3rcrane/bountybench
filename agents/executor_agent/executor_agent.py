@@ -13,6 +13,7 @@ from messages.agent_messages.executor_agent_message import ExecutorAgentMessage
 from messages.convert_message_utils import cast_action_to_command
 from messages.message import Message
 from resources.model_resource.model_resource import ModelResponseFailure
+from resources.model_resource.model_utils import ProtectedInputTruncationError
 from resources.resource_type import ResourceType
 from utils.logger import get_main_logger
 
@@ -185,6 +186,10 @@ class ExecutorAgent(BaseAgent):
                         "message": error_msg,
                         "attempt": iterations + 1,
                     }
+
+                    if isinstance(e, ProtectedInputTruncationError):
+                        error_history.append(error_entry)
+                        raise
 
                     # Check for status code on the exception)
                     if hasattr(e, "status_code"):

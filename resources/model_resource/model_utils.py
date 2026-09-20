@@ -17,6 +17,10 @@ from utils.logger import get_main_logger
 logger = get_main_logger(__name__)
 
 
+class ProtectedInputTruncationError(ValueError):
+    """Raised rather than sending input with protected content truncated."""
+
+
 def get_model_provider(use_helm: bool = False) -> ModelProvider:
     """
     Get the appropriate model provider based on the model type.
@@ -108,7 +112,14 @@ def truncate_input_to_max_tokens(
     model: str,
     use_helm: bool = False,
     preserve_oldest: bool = False,
+    protected_content: str = None,
+    required_prefix: str = None,
 ) -> str:
+    if protected_content and protected_content not in model_input:
+        raise ValueError("Protected content is not present in the model input.")
+    if required_prefix and not model_input.startswith(required_prefix):
+        raise ValueError("Required prefix is not at the start of the model input.")
+
     input_tokens = tokenize_input(model_input, model, use_helm)
     num_input_tokens = len(input_tokens)
     truncation_alert = "\n...TRUNCATED...\n"
@@ -121,16 +132,80 @@ def truncate_input_to_max_tokens(
         )
         tokens_to_keep = max_input_tokens - num_tokens_in_truncation_alert
         if preserve_oldest:
-            truncated_tokens = (
-                input_tokens[:tokens_to_keep] + truncation_alert_tokens
-            )
-            return decode_tokenized_inputs(truncated_tokens, model, use_helm)
+            truncated_tokens = input_tokens[:tokens_to_keep] + truncation_alert_tokens
+            truncated_input = decode_tokenized_inputs(truncated_tokens, model, use_helm)
+        else:
+            half_tokens_to_keep = tokens_to_keep // 2
+            beginning_tokens = input_tokens[:half_tokens_to_keep]
+            end_tokens = input_tokens[-half_tokens_to_keep:]
+            truncated_tokens = beginning_tokens + truncation_alert_tokens + end_tokens
+            truncated_input = decode_tokenized_inputs(truncated_tokens, model, use_helm)
 
-        half_tokens_to_keep = tokens_to_keep // 2
-        beginning_tokens = input_tokens[:half_tokens_to_keep]
-        end_tokens = input_tokens[-half_tokens_to_keep:]
-        truncated_tokens = beginning_tokens + truncation_alert_tokens + end_tokens
-        truncated_input = decode_tokenized_inputs(truncated_tokens, model, use_helm)
+        if protected_content:
+            protected_start = model_input.rfind(protected_content)
+            protected_tail = model_input[protected_start:]
+            required_prefix_preserved = (
+                not required_prefix or truncated_input.startswith(required_prefix)
+            )
+            if (
+                not truncated_input.endswith(protected_tail)
+                or not required_prefix_preserved
+            ):
+                fixed_prefix = required_prefix or ""
+                middle_tokens = tokenize_input(
+                    model_input[len(fixed_prefix) : protected_start],
+                    model,
+                    use_helm,
+                )
+                required_input = fixed_prefix + truncation_alert + protected_tail
+                required_input_tokens = tokenize_input(required_input, model, use_helm)
+                middle_tokens_to_keep = max_input_tokens - len(required_input_tokens)
+
+                if middle_tokens_to_keep >= 0:
+                    protected_middle_tokens = middle_tokens[:middle_tokens_to_keep]
+                    truncated_input = (
+                        fixed_prefix
+                        + decode_tokenized_inputs(
+                            protected_middle_tokens, model, use_helm
+                        )
+                        + truncation_alert
+                        + protected_tail
+                    )
+
+                    # Token boundaries can change when separately decoded pieces
+                    # are joined. Remove middle tokens until the exact final text
+                    # fits, while leaving the protected tail untouched.
+                    while (
+                        len(tokenize_input(truncated_input, model, use_helm))
+                        > max_input_tokens
+                        and protected_middle_tokens
+                    ):
+                        protected_middle_tokens = protected_middle_tokens[:-1]
+                        truncated_input = (
+                            fixed_prefix
+                            + decode_tokenized_inputs(
+                                protected_middle_tokens, model, use_helm
+                            )
+                            + truncation_alert
+                            + protected_tail
+                        )
+
+                    if (
+                        (fixed_prefix or protected_middle_tokens)
+                        and len(tokenize_input(truncated_input, model, use_helm))
+                        <= max_input_tokens
+                        and truncated_input.startswith(fixed_prefix)
+                        and truncated_input.endswith(protected_tail)
+                    ):
+                        return truncated_input
+
+                raise ProtectedInputTruncationError(
+                    "The most recent teacher message cannot fit intact with "
+                    "the student prompt under the "
+                    f"{max_input_tokens}-token model input limit. Rejecting "
+                    "the student turn instead."
+                )
+
         return truncated_input
 
     return model_input
