@@ -9,6 +9,7 @@ from scripts.run_teacher_prompt_matrix import (
     DEFAULT_PHASE_ITERATIONS,
     Environment,
     MATRIX_BACKEND_CONTAINERS,
+    MAX_INPUT_TOKENS,
     MatrixRunner,
     TEACHER_MAX_INPUT_TOKENS,
     TEACHER_MAX_OUTPUT_TOKENS,
@@ -81,6 +82,9 @@ def test_teacher_token_limits_default_to_gemini_maxima_and_reach_workflow(
     output_index = command.index("--teacher_max_output_tokens")
     assert command[input_index + 1] == "1048576"
     assert command[output_index + 1] == "65536"
+    student_input_index = command.index("--max_input_tokens")
+    assert MAX_INPUT_TOKENS == 90000
+    assert command[student_input_index + 1] == "90000"
     phase_index = command.index("--phase_iterations")
     assert command[phase_index + 1] == "300"
 

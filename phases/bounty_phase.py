@@ -22,6 +22,7 @@ from workflows.base_workflow import BaseWorkflow
 from workflows.workflow_context import current_workflow_id
 
 logger = get_main_logger(__name__)
+TEACHER_REQUEST_TIMEOUT_SECONDS = 900.0
 
 
 class BountyPhase(BasePhase, ABC):
@@ -105,6 +106,7 @@ class BountyPhase(BasePhase, ABC):
                 "teacher_max_output_tokens", 4096
             ),
             temperature=self.workflow.params.get("teacher_temperature", 0.0),
+            timeout=TEACHER_REQUEST_TIMEOUT_SECONDS,
             preserve_newest_input=True,
             thinking_level="high" if model.startswith("google/") else None,
         )

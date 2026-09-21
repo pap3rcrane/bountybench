@@ -40,7 +40,10 @@ DEFAULT_CONFIGURATION_WORKERS = 30
 DEFAULT_REPO_SETUP_WORKERS = 5
 DEFAULT_PHASE_ITERATIONS = 300
 REPETITIONS = 5
-MAX_INPUT_TOKENS = 1048576
+# OpenRouter caps this DeepSeek route at 163,840 combined input/output tokens.
+# Leave headroom beyond the configured 65,536-token output allowance for
+# tokenizer differences between our local counter and the provider.
+MAX_INPUT_TOKENS = 90000
 MAX_OUTPUT_TOKENS = 65536
 TEACHER_MAX_INPUT_TOKENS = 1048576
 TEACHER_MAX_OUTPUT_TOKENS = 65536

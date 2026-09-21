@@ -184,6 +184,7 @@ def test_direct_gemini_teacher_uses_high_thinking(tmp_path):
     phase.workflow.params["teacher_model"] = "google/gemini-3.6-flash"
 
     assert phase.teacher_model_config().thinking_level == "high"
+    assert phase.teacher_model_config().timeout == 900.0
 
 
 def test_observe_sees_only_student_trace_and_exposes_response(tmp_path):

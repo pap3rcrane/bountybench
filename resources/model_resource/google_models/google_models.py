@@ -19,6 +19,10 @@ logger = get_main_logger(__name__)
 RATE_LIMIT_MAX_RETRIES = 3
 RATE_LIMIT_BACKOFF_SECONDS = 60
 TRANSIENT_STATUS_CODES = {429, 503}
+TRANSIENT_ERROR_TEXT = (
+    "Temporary failure in name resolution",
+    "Name or service not known",
+)
 
 
 def _valid_token_count(value) -> Optional[int]:
@@ -121,15 +125,18 @@ class GoogleModels(ModelProvider):
                 status_code = self._status_code(error)
                 if status_code is not None:
                     error.status_code = status_code
+                is_transient_network_error = any(
+                    marker in str(error) for marker in TRANSIENT_ERROR_TEXT
+                )
                 if (
                     status_code not in TRANSIENT_STATUS_CODES
-                    or retry_number == RATE_LIMIT_MAX_RETRIES
-                ):
+                    and not is_transient_network_error
+                ) or retry_number == RATE_LIMIT_MAX_RETRIES:
                     raise
 
                 logger.warning(
-                    "Gemini returned transient HTTP %s. Retrying %s/%s in %s seconds.",
-                    status_code,
+                    "Gemini returned a transient error (%s). Retrying %s/%s in %s seconds.",
+                    status_code if status_code is not None else type(error).__name__,
                     retry_number + 1,
                     RATE_LIMIT_MAX_RETRIES,
                     RATE_LIMIT_BACKOFF_SECONDS,

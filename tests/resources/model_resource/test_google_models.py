@@ -381,6 +381,35 @@ def test_gemini_retries_service_unavailable_three_times_with_fixed_backoff():
     assert mock_sleep.call_args_list == [call(60), call(60), call(60)]
 
 
+def test_gemini_retries_temporary_dns_failures_with_fixed_backoff():
+    dns_error = OSError(-3, "Temporary failure in name resolution")
+    response = MagicMock()
+    response.text = "Teacher response"
+    response.usage_metadata.candidates_token_count = 4
+    client = MagicMock()
+    client.models.generate_content.side_effect = [dns_error, response]
+    client.models.count_tokens.return_value.total_tokens = 3
+
+    with (
+        patch.object(GoogleModels, "_api_key", return_value="test-key"),
+        patch.object(genai, "Client", return_value=client),
+        patch(
+            "resources.model_resource.google_models.google_models.sleep"
+        ) as mock_sleep,
+    ):
+        result = GoogleModels().request(
+            model="google/gemini-3.6-flash",
+            message="TRACE AND INSTRUCTIONS",
+            temperature=0.0,
+            max_tokens=100,
+            stop_sequences=[],
+        )
+
+    assert result.content == "Teacher response"
+    assert client.models.generate_content.call_count == 2
+    assert mock_sleep.call_args_list == [call(60)]
+
+
 def test_model_resource_forwards_separate_gemini_system_prompt():
     provider = MagicMock()
     provider.make_request.return_value = ModelResponse(
@@ -443,7 +472,7 @@ def test_direct_gemini_reserves_input_headroom_for_tokenizer_differences():
         )
         resource.run(SimpleNamespace(memory="USER MESSAGE"))
 
-    assert truncate.call_args.kwargs["max_input_tokens"] == 943_718
+    assert truncate.call_args.kwargs["max_input_tokens"] == 786_432
 
 
 def test_model_resource_forwards_high_thinking_level():

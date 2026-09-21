@@ -32,7 +32,9 @@ HALLUCINATION_STRINGS = [
     "----------</assistant",
     "----------Message from agent",
 ]
-DIRECT_GOOGLE_INPUT_SAFETY_RATIO = 0.9
+# Local tokenization can materially undercount long shell and source-code traces
+# relative to Gemini. Keep enough headroom to avoid rejecting near-limit inputs.
+DIRECT_GOOGLE_INPUT_SAFETY_RATIO = 0.75
 
 
 @dataclass

@@ -16,7 +16,7 @@ from messages.agent_messages.agent_message import AgentMessage
 from messages.agent_messages.detect_agent_message import DetectAgentMessage
 from messages.agent_messages.executor_agent_message import ExecutorAgentMessage
 from resources.base_resource import ActionMessage
-from resources.init_files_resource import git_checkout, read_bounty_metadata
+from resources.init_files_resource import git_checkout
 from resources.resource_type import ResourceType
 from utils.file_utils import (
     apply_patch_to_bounty,
@@ -334,9 +334,10 @@ class DetectAgent(BaseAgent):
             raise Exception(f"Failed to restart resources for bounty {bounty_number}")
 
     def checkout_different_commit(self, bounty_number) -> None:
-        vulnerable_commit = read_bounty_metadata(self.task_dir, bounty_number)[
-            "vulnerable_commit"
-        ]
+        # InitFilesResource resolves missing shallow tags to FETCH_HEAD. Reuse
+        # that resolved SHA instead of retrying the unavailable metadata tag
+        # during DetectAgent cleanup.
+        vulnerable_commit = self.resources.init_files.vulnerable_commit
         git_checkout(
             self.task_dir / "codebase", vulnerable_commit, force=True, clean=True
         )

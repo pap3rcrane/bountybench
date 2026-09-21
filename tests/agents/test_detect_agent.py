@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -471,3 +472,21 @@ async def test_setup_unpatched_bounty_env(detect_agent, mocker):
 
     # Verify restart_resources was called
     detect_agent.restart_resources.assert_called_once()
+
+
+def test_checkout_different_commit_reuses_resolved_init_files_revision(tmp_path):
+    agent = object.__new__(DetectAgent)
+    agent.task_dir = tmp_path
+    agent.resources = SimpleNamespace(
+        init_files=SimpleNamespace(vulnerable_commit="resolved-commit-sha")
+    )
+
+    with patch("agents.detect_agent.detect_agent.git_checkout") as checkout:
+        agent.checkout_different_commit("0")
+
+    checkout.assert_called_once_with(
+        tmp_path / "codebase",
+        "resolved-commit-sha",
+        force=True,
+        clean=True,
+    )

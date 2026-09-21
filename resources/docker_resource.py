@@ -85,7 +85,7 @@ class DockerResource(RunnableBaseResource):
         work_dir: str = None,
         volumes: dict = None,
         detach: bool = False,
-        timeout: int = 600,  # timeout in seconds (default: 10 minutes)
+        timeout: int = 1800,  # timeout in seconds (default: 30 minutes)
     ) -> tuple:
         """
         Run a Docker container with the specified configuration.
@@ -97,7 +97,7 @@ class DockerResource(RunnableBaseResource):
             work_dir (Optional[str]): The working directory inside the container.
             volumes (Optional[dict]): The volumes to mount in the container.
             detach (bool): Run the container in detached mode. Defaults to False.
-            timeout (int): Time in seconds before killing the container. Defaults to 600.
+            timeout (int): Time in seconds before killing the container. Defaults to 1800.
 
         Returns:
             tuple: A tuple containing the logs from the container and the exit code.
